@@ -123,11 +123,11 @@ CHANGELOG.md        version history of the tools (episode 1 used g5)
 ## Data
 
 - `data/toy_shell/`: frozen results of a toy simulation written by the author (one orbital shell, satellites and debris; parameters chosen by hand). The simulation code is not part of this repository: the bench only needs its results.
-- `data/synthetic/`: synthetic datasets (bike rentals, app sessions, power plants and weather stations; column names in Italian, as generated) generated with an AI assistant (Claude) for a study project. They contain no real people. Names of places are real Italian locations, but every value is invented.
-
-The four `context.md` files are translations of each dataset's description (`CONTESTO.md`, not included). They are left exactly as they were given to the analyst during the runs.
+- `data/synthetic/`: synthetic datasets (bike rentals, app sessions, power plants and weather stations; column names in Italian) generated with an AI assistant (Claude) for a study project. They contain no real people. Names of places are real Italian locations, but every value is invented.
 
 Both are released under the same licence as the code.
+
+The four `context.md` files are translations of each dataset's description (`CONTESTO.md`, not included). They are left exactly as they were given to the analyst during the runs.
 
 ## Licence
 
