@@ -1,5 +1,7 @@
 # ai-analyst
 
+[![tests](https://github.com/corsipietro/ai-analyst/actions/workflows/tests.yml/badge.svg)](https://github.com/corsipietro/ai-analyst/actions/workflows/tests.yml)
+
 A small AI data analyst that runs on a laptop: open models through [Ollama](https://ollama.com), a [LangGraph](https://github.com/langchain-ai/langgraph) graph, and data tools written in Python that check what the model does.
 
 You give it a results database (DuckDB, or CSV/Parquet files) and a few lines of context, then you ask questions in plain language. The model chooses what to compute; the tools compute it and report what they find: empty values, units, how the tables link and whether a difference is larger than the noise.
