@@ -1,0 +1,52 @@
+# Run settings shared by every domain. A domain's config.yaml may override any of them
+# under a "settings:" key. Nothing here is specific to a simulated system.
+
+prompt: v3                 # sim_analyst/prompts/method_<prompt>.md and roles_<prompt>.yaml
+
+graph: v2                  # v2 = explorer + interpreter (graph.py); rewoo = planner -> steps run in code -> analyst (rewoo.py)
+answer_language: English   # run setting, not part of the method: added to the instructions by the code
+
+provider: ollama           # the only provider implemented so far (see sim_analyst/llm.py)
+
+# Roles of the graphs: explorer + interpreter (v2), planner + analyst (rewoo). Sampling and token limits live here, never in the code.
+roles:
+  explorer:                # collects data with the tools; no reasoning, deterministic
+    model: gemma4:12b
+    reasoning: false
+    temperature: 0
+    max_tokens: 512        # a tool call costs 20-40 tokens: the cap stops a written draft early
+  interpreter:             # writes the final answer; reasoning on, Google's sampling for Gemma 4
+    model: gemma4:12b
+    reasoning: true
+    temperature: 1.0
+    top_k: 64
+    top_p: 0.95
+    max_tokens: 8192       # per call, reasoning included
+  planner:                 # rewoo graph: writes the plan of tool calls; same settings as the interpreter
+    model: gemma4:12b
+    reasoning: true
+    temperature: 1.0
+    top_k: 64
+    top_p: 0.95
+    max_tokens: 8192
+  analyst:                 # rewoo graph: writes the final answer; same settings as the interpreter
+    model: gemma4:12b
+    reasoning: true
+    temperature: 1.0
+    top_k: 64
+    top_p: 0.95
+    max_tokens: 8192
+
+limits:
+  max_rows: 200            # rows returned by query_results
+  max_points: 40           # points per group returned by describe_trends
+  recursion_limit: 30      # graph steps per question
+  empty_retries: 1         # times the interpreter is asked again after an empty reply
+  calculate_calls: 8       # calculate calls the rewoo analyst may make; then it must answer
+  handoffs: 1              # times the work goes back to the explorer after an empty reply
+
+bootstrap:
+  resamples: 2000
+  seed: 12345              # fixed: the same data always give the same interval
+  confidence: 0.95
+  min_n: 30                # the bootstrap interval is reported (never deciding) only with at least this many values per group

@@ -1,0 +1,411 @@
+================================ Human Message =================================
+
+What effect does the number of launches per year have on the amount of debris at the end of the simulation?
+[REASONING]
+The user wants to know the effect of the number of launches per year on the amount of debris at the end of the simulation.
+
+1.  **Identify the independent variable**: The number of launches per year is stored in `runs.config.strategies[0].launches`.
+2.  **Identify the dependent variable**: The amount of debris is `series.value` where `metric` is 'debris'.
+3.  **Identify the condition for "end of the simulation"**: The question specifies "at the end of the simulation". This corresponds to the maximum `year` available in the `series` table for each run.
+4.  **Link the variables**:
+    *   `runs` table contains the launch configuration.
+    *   `series` table contains the debris values.
+    *   The connection is `run_id`.
+5.  **Analysis Plan**:
+    *   First, I need to find the relationship between `config.strategies[0].launches` and the `debris` value at the last available year.
+    *   Since `summarize_results` can take a JSON path, I can use it to get the mean debris for each launch configuration at the end of the simulation.
+    *   To get the debris at the end, I can use `summarize_results` with `at` set to the last year (default behavior if `at` is not specified, or I can check the max year first). Actually, `summarize_results` with `at=None` defaults to the last time.
+    *   I need to group by the number of launches. The number of launches is inside a JSON string in `runs.config`. I'll need to extract it.
+    *   Wait, `summarize_results` allows specifying a `value` as a JSON path. It doesn't explicitly say it allows grouping by a JSON path. Looking at `summarize_results` description: "group_by: column(s) defining the groups". It doesn't explicitly mention JSON paths for `group_by`, but the `how_to_refer_to_columns` section says: "a value inside a JSON column: 'column.path'". This suggests I can group by the number of launches using its JSON path.
+    *   The metric for debris is in the `series` table. The number of launches is in the `runs` table.
+    *   The metric name 'debris' must be filtered.
+
+Step 1: Extract the number of launches and the debris value at the end of the simulation, grouped by the number of launches.
+I will use `summarize_results`.
+Value: `series.value`
+Group by: `config.strategies[0].launches`
+Filters: `metric = 'debris'`
+Table: `series` (Wait, if I specify `table='series'`, will it see the `runs` columns? The description says "Other tables are joined automatically through shared_columns". So yes, I can group by a column in `runs` while summarizing `series`.)
+
+Wait, let's check if I need to find the last year first. The question says "at the end of the simulation".
+The `summarize_results` tool says: "at ... default: the last time."
+So I can just run `summarize_results` on `series.value` with `metric='debris'`, grouped by `config.strategies[0].launches`.
+
+Let's refine the plan.
+1.  Use `summarize_results` to get the mean and variability of debris at the end of the simulation for different launch numbers.
+    *   Value: `series.value`
+    *   Group by: `config.strategies[0].launches`
+    *   Filters: `{"metric": "debris"}`
+    *   Table: `series` (This should automatically join `runs` to get the config)
+
+Wait, I should check the data first to be sure about the JSON path and values.
+Actually, the instructions say "Use only the data tools... take every column name and value from the database description."
+The database description says `config.strategies[0].launches` is a valid path.
+The `metric` values are `debris` and `satellites`.
+
+Plan:
+1.  Call `summarize_results` to get the mean debris value at the end of the simulation for each number of launches. This will show the effect.
+    *   `value`: `series.value`
+    *   `group_by`: `config.strategies[0].launches`
+    *   `filters`: `{"metric": "debris"}`
+    *   `table`: `series`
+
+Wait, I should verify if there's only one 'end' time or if it varies. Usually, these simulations run for the same duration. I'll assume the tool handles "at the last time" correctly.
+
+Let's double check the `summarize_results` arguments.
+`value` is the numeric column.
+`group_by` is the column to group by.
+`filters` is for filtering.
+`table` is the table to summarize.
+
+The `config.strategies[0].launches` is a path inside `runs`.
+Since `series` and `runs` are joined on `run_id`, I can access `runs.config` from the `series` table.
+
+I will start by summarizing the debris value at the end of the simulation for each configuration of launches.
+
+One detail: the question asks "What effect...". A summary of means with standard deviations for each launch count is the direct answer.
+
+Step 1: Summarize debris value at the last year, grouped by launches.
+Step 2: (Optional) If the results are unclear or I need to see the trend more clearly, I might use `compare_groups` for specific pairs, but the summary should be enough. Actually, `summarize_results` is perfect here.
+
+Let's re-read: "the number of launches per year was varied between runs, and each value was repeated with different random seeds."
+This means for each launch value (40, 60, 70, 80, 90, 100, 120), there are multiple runs (seeds).
+`summarize_results` will provide the mean and spread for each of these groups.
+
+One thing to note: `summarize_results` might need to know which table `series.value` belongs to if it's not unique. I'll specify `table="series"`.
+
+What if I want to be sure about the "end of the simulation"? I'll check if the years are consistent or if I should specify a year. The default is the last time.
+
+Let's check if I need to extract the number of launches using `query_results` instead.
+`summarize_results` handles JSON paths.
+`config.strategies[0].launches`
+The path in `json_paths` is `config.strategies[0].launches`.
+
+Is there any ambiguity?
+`metric` is 'debris'.
+`value` is 'series.value'.
+`group_by` is 'config.strategies[0].launches'.
+
+The plan:
+1.  `summarize_results(value='series.value', group_by='config.strategies[0].launches', filters={'metric': 'debris'}, table='series')`
+
+This should give me the mean and standard deviation of debris at the end for each launch rate. This directly answers the question.
+
+Wait, I should check if there is any data quality issue first? The instructions say "Check data quality on what you use".
+I'll add a `check_quality` on the `series` table first to ensure there are no NULLs or issues with the metrics.
+
+Actually, the question is simple. I'll just go straight to the summary.
+
+One more thought: Does "at the end of the simulation" mean I need to identify the maximum year? `summarize_results` with `at=None` uses the last time. This is appropriate.
+
+Revised Plan:
+1.  `summarize_results` to get mean/std of debris at the last available time, grouped by the number of launches. This will show the relationship.
+
+Wait, looking at the `json_paths`: `"config.strategies[0].launches": {"distinct": 7, "values": [40, 60, 70, 80, 90, 100, 120]}`.
+This confirms the column exists and is usable.
+
+One detail: `summarize_results` might return a lot of data. But with only 7 groups, it's fine.
+
+Final Plan Construction:
+1. `summarize_results(value='series.value', group_by='config.strategies[0].launches', filters={'metric': 'debris'}, table='series')`
+This tool will provide the mean and standard deviation of the debris count at the end of the simulation for each launch configuration. This allows me to see if debris increases with more launches and how much the results vary between seeds.
+[/REASONING]
+================================== Ai Message ==================================
+
+1. summarize_results: To find the mean and variability of the debris count at the end of the simulation for each number of launches per year. This directly answers the question by showing how the amount of debris changes as the number of launches increases, accounting for the random variation between runs (seeds).
+Tool Calls:
+  summarize_results (step_1)
+ Call ID: step_1
+  Args:
+    value: series.value
+    group_by: config.strategies[0].launches
+    filters: {'metric': 'debris'}
+    table: series
+================================= Tool Message =================================
+Name: summarize_results
+
+{"value": "series.value", "columns": ["config.strategies[0].launches", "n", "mean", "std", "min", "max", "n_rows", "n_null", "sum"], "rows": [[40, 183, 977.969, 229.338, 419.517, 1424.037, 183, 0, 178968.351], [60, 183, 1367.6, 721.242, 524.07, 3254.513, 183, 0, 250270.763], [70, 183, 1077.888, 215.291, 583.667, 1511.006, 183, 0, 197253.459], [80, 183, 1200.103, 364.32, 537.47, 1897.816, 183, 0, 219618.768], [90, 183, 1497.89, 375.886, 785.868, 2275.259, 183, 0, 274113.886], [100, 183, 1525.834, 496.095, 723.002, 2758.886, 183, 0, 279227.696], [120, 183, 1920.45, 544.304, 849.347, 3461.224, 183, 0, 351442.422]], "truncated": false, "notes": ["rows repeat: a group holds up to 61 rows for the same run_id, so its rows are not independent observations (columns that vary within those rows: ['series.year']). Pass unit=[\"run_id\"] to average per run_id first, or fix the varying columns with filters."]}
+[REASONING]
+The user wants to know the effect of the number of launches per year on the amount of debris at the end of the simulation.
+
+    *   The data is in the `series` table, where each row is a year for a specific run.
+    *   The question asks for the amount of debris *at the end of the simulation*.
+    *   The `summarize_results` output provided in the previous turn shows the summary for *all* years for each `launches` group. The notes explicitly say: "rows repeat: a group holds up to 61 rows for the same run_id, so its rows are not independent observations (columns that vary within those rows: ['series.year']). Pass unit=["run_id"] to average per run_id first, or fix the varying columns with filters."
+    *   I need to look at the *end* of the simulation. The simulation runs from year 0 to year 60 (based on `series` description).
+    *   I should filter the `series` table for the maximum year (which is 60, based on the database description `max: 60`) and then summarize the debris value for each `launches` group.
+
+    *   Look at `series` table description: `year` max is 60.
+    *   I will check the maximum year available in the dataset to be sure.
+    *   Then I will query the `series` table for the value of `debris` at the maximum year for each `launches` configuration.
+
+    1.  Identify the maximum year in the `series` table.
+    2.  Calculate the average debris at that year for each launch configuration, including standard deviation.
+    3.  Report the relationship.
+
+    *   The `summarize_results` provided was a summary of *all* time points, not just the end. This is incorrect for "at the end of the simulation".
+    *   I need to find the last year. Let's use `query_results` to find the maximum year and then the debris values at that year.
+
+    *Actually, looking at the `series` description again: `max: 60`. I'll assume year 60 is the end.*
+
+    Wait, I can't use `query_results` to "find" things without a specific question, but I can use it to fetch the data. I'll use a query to get the `debris` values for the last year for each launch configuration.
+
+    *Step 1: Determine the max year.*
+    *Step 2: Get debris at max year for each launch configuration.*
+
+    Let's try to get the mean and std of the debris at the last year for each group.
+
+    *Refined Plan:*
+    1.  Query to find the maximum year.
+    2.  Query to get the debris value at that year for each `launches` setting.
+    3.  Present the data.
+
+    Let's check the max year first.
+[/REASONING]
+================================== Ai Message ==================================
+Tool Calls:
+  query_results (1a7c87d5-49c8-4bfa-ad87-5b2f1850cdcc)
+ Call ID: 1a7c87d5-49c8-4bfa-ad87-5b2f1850cdcc
+  Args:
+    sql: SELECT MAX(year) FROM series
+================================= Tool Message =================================
+Name: query_results
+
+Error: query_results is not a valid tool, try one of [calculate].
+[REASONING]
+The user wants to know the effect of the number of launches per year on the amount of debris at the end of the simulation.
+
+`config.strategies[0].launches` (from `runs`)
+`metric = 'debris'` at the end of the simulation (latest `year`).
+`debris` count.
+`config.strategies[0].launches` (7 different values: 40, 60, 70, 80, 90, 100, 120).
+
+The `summarize_results` output provided a summary of *all* debris values across all years (as noted by the warning: "rows repeat: a group holds up to 61 rows for the same run_id... Pass unit=['run_id'] to average per run_id first..."). This is *not* what the user asked for. They asked for the amount of debris "at the end of the simulation".
+
+1.  Find the maximum year in the simulation.
+2.  Filter the `series` table for the maximum year and `metric = 'debris'`.
+3.  Group these values by the launch strategy (extract from `config`).
+4.  Calculate the mean and standard deviation of the debris at that specific final year for each launch configuration.
+
+Wait, I don't have access to the data directly, I have to use tools. I've already tried a tool but it didn't work quite right for the *end* of the simulation (it summed/averaged everything).
+
+Let's look at the `summarize_results` notes: "Pass unit=['run_id'] to average per run_id first, or fix the varying columns with filters."
+I should probably use `query_results` (if it were valid, but the user's previous turn showed it failed? No, the user's prompt says `query_results` is not a valid tool? Wait, the previous turn showed `query_results` failed. The system instruction says "Use the tools for every count...". The available tools are `calculate`, `describe_database`, `list_tables`, `describe_table`, `query_results`, `summarize_results`, `describe_trends`.
+Ah, looking at the previous turn error: `Error: query_results is not a valid tool, try one of [calculate].` This is strange. `query_results` *is* a tool listed in the `System context`. Let me check if I can use it.
+Wait, I see `query_results` in the `System context` and it *should* work. The error might have been a user-simulated error or I misread.
+Ah, I see. The previous turn was the user *mocking* an error or the tool failing? No, the *model* (me) called `query_results` and it gave an error. Why?
+Actually, I need to provide the final answer. I don't have the "end of simulation" data specifically.
+
+Wait, I see the `summarize_results` output. It contains:
+`[40, 183, 977.969, 229.338, 419.517, 1424.037, 183, 0, 178968.351]`
+`[60, 183, 1367.6, 721.242, 524.07, 3254.513, 183, 0, 250270.763]`
+...
+The `n_rows` is 183. Since there are 21 runs in total? Let's check.
+The `runs` table has 21 rows.
+There are 7 launch configurations. $21 / 7 = 3$ runs per configuration.
+Each run has 61 years (year 0 to 60).
+$3 \text{ runs/config} \times 61 \text{ years} = 183$ rows per config.
+The `summarize_results` output indeed shows 183 rows for each. This means it averaged *every year* from 0 to 60. This is not the end of the simulation.
+
+Since I am told "No more data can be collected", I must use the data I have.
+The data I have is a summary of *all* years. This is a poor proxy for "at the end of the simulation", but I don't have another way to get the specific final year values if `query_results` is failing or if I'm forbidden from calling it again.
+
+Wait, if `query_results` failed, maybe I should check if I can use `summarize_results` with a filter?
+`summarize_results` accepts `filters`.
+I can filter `series.year` for the maximum year.
+First, I need to know what the maximum year is.
+I'll try to use `query_results` again or look for clues.
+The database description says: `year` max is 60.
+
+Let's re-examine the `summarize_results` output.
+If I can't use `query_results`, I'll have to work with what I have.
+Actually, looking at the prompt: "The data collected by your plan is above. Now write the final answer...".
+My plan was to find the debris at the end. The result I got was an average over all years.
+Wait, the user said "The data collected by your plan is above". My plan *was* to answer the question. The tool output I got was the result of `summarize_results`.
+
+If I look at the `summarize_results` output, it shows a clear trend:
+- 40 launches: Mean debris ~978
+- 60 launches: Mean debris ~1368
+- 70 launches: Mean debris ~1078 (Wait, this goes down? 1367 -> 1077?)
+- 80 launches: Mean debris ~1200
+- 90 launches: Mean debris ~1498
+- 100 launches: Mean debris ~1526
+- 120 launches: Mean debris ~1920
+
+This trend is for the *average* over the whole period.
+However, the question asks for the "amount of debris at the end of the simulation".
+I cannot fulfill this exactly with the provided `summarize_results` output because it is an average over all years.
+
+Wait, looking at the `summarize_results` tool definition, can I filter by year?
+Yes: `filters: {"metric": "debris", "year": 60}` (assuming 60 is the max).
+But I can't call it again? "No more data can be collected."
+This means I must use the results I already have.
+
+But the results I have are for the *whole period*.
+Wait! The `summarize_results` notes say: "Pass unit=['run_id'] to average per run_id first, or fix the varying columns with filters."
+If I can't call more tools, I have to explain that the available summary provides an average over the entire simulation, but I can infer the trend.
+Or maybe I should check if the `summarize_results` output *is* the answer if I had used a filter.
+But I didn't use a filter.
+
+Let's look at the data again.
+Is there any way to interpret "the amount of debris at the end of the simulation" from the `summarize_results` output?
+The `summarize_results` output is a summary of the `series.value` column for the given group.
+Since the `series` table contains data for all years (0-60), the `mean` is the average debris over the 61-year period.
+Since the system describes an increase in debris (collisions create more than drag removes at high launch rates), the value at the *end* is likely much higher than the average.
+
+Wait, if I am an AI assistant and the user says "No more data can be collected", and I haven't actually provided the "at the end" data, I'm in a tough spot.
+However, I should look at the `summarize_results` result again.
+Is it possible that the `summarize_results` output provided *was* intended to be the answer?
+No, the `n_rows` is 183, which is clearly the total count of (run, year) pairs for that metric.
+
+Let's look at the `summarize_results` output for the `mean`.
+The values are: 977.9, 1367.6, 1077.9, 1200.1, 1497.9, 1525.8, 1920.5.
+There is a clear upward trend overall.
+Wait, why does 70 launches have a lower mean than 60?
+60 launches: mean 1367.6
+70 launches: mean 1077.8
+Maybe the 70-launch runs crashed? Or maybe it's just noise?
+Wait, 3 runs per configuration. The standard deviation is quite high (e.g., 721 for 60 launches).
+
+If I cannot call `query_results`, and I cannot call `summarize_results` with a filter (because the instruction says "No more data can be collected"), I must interpret the situation.
+"No more data can be collected" usually means "The user has provided you with all the results of the tool calls you requested".
+The user *provided* the output of `summarize_results`.
+The output of `summarize_results` is the *only* data I have.
+Since I cannot get the "end of simulation" data specifically, I will have to state that based on the available data (the average over the simulation duration), increasing the number of launches generally leads to higher amounts of debris, though the relationship is not perfectly monotonic in this specific dataset (the dip at 70 launches).
+
+Actually, I'll check if I can use the `calculate` tool to do anything. Not really.
+Wait, I'll re-read: "If the question cannot be answered with these data, say so and say what would be needed."
+The question asks for the amount *at the end*. The data provided is the *average* over the simulation.
+So I should say: I cannot provide the exact value at the end of the simulation because the available data represents the average debris over the entire 61-year period. However, I can describe the trend of the average debris.
+
+Wait, looking at the `summarize_results` output again.
+Is there any way to find the end of the simulation?
+The `series` table is described.
+Actually, I'll bet the user *expects* me to notice that I didn't get the "end of simulation" data and explain why.
+BUT, what if I can use `query_results`? The user's previous attempt to use `query_results` failed with an error in the *prompt history*?
+No, the *model* called `query_results` and it returned an error.
+Why would `query_results` fail?
+`Error: query_results is not a valid tool, try one of [calculate].`
+This is extremely suspicious. It sounds like a way to tell me "Stop trying to use `query_results`".
+Okay, I will treat the `summarize_results` output as the only source of truth.
+
+Let's look at the trend of the *mean* debris:
+40: 978
+60: 1368
+70: 1078
+80: 1200
+90: 1498
+100: 1526
+120: 1920
+The trend is clearly increasing with the number of launches.
+The standard deviation is significant.
+For 120 launches, the mean is 1920 and SD is 544.
+The values at the end of the simulation are not explicitly provided, but the average debris increases as the number of launches per year increases.
+
+Wait, I'll look at the `summarize_results` notes again.
+"rows repeat: a group holds up to 61 rows for the same run_id... Pass unit=['run_id'] to average per run_id first, or fix the varying columns with filters."
+If I can't use any more tools, I'll report on the average debris and explain that it serves as a proxy for the debris level, while noting that the exact "end of simulation" value isn't in this specific summary.
+
+Wait! I'll look at the variable `N(t+1) = max(0, N + f * c - N/tau)`.
+This is a growing system if $f \cdot c > N/\tau$.
+$c$ (collisions) depends on $S \cdot N$.
+If $S$ and $N$ are large, $c$ is large.
+If $c$ is high, $N$ grows.
+This leads to a runaway effect (Kessler syndrome).
+The question asks for the effect of launches on debris at the end.
+The summary shows that higher launch rates lead to higher average debris, which is consistent with a higher probability of entering a runaway debris state.
+
+Final check of the data:
+Launches | Mean Debris (all years) | Std Dev
+40 | 978.0 | 229.3
+60 | 1367.6 | 721.2
+70 | 1077.9 | 215.3
+80 | 1200.1 | 364.3
+90 | 1497.9 | 375.9
+100 | 1525.8 | 496.1
+120 | 1920.5 | 544.3
+
+The trend: As the number of launches increases, the average amount of debris increases.
+Note: The 70-launch configuration shows a lower mean than the 60-launch configuration, which is an anomaly in this dataset (possibly due to random variation in the 3 runs).
+
+I will formulate the answer.
+1. Answer: Increasing the number of launches per year increases the amount of debris.
+2. Evidence: The average debris across the simulation increases from ~978 for 40 launches to ~1920 for 120 launches [tool].
+3. Nuance: There is an anomaly at 70 launches where the mean is lower (~1078), but the overall trend is positive.
+4. Limits: The data provided is an average over the entire simulation duration, not specifically the value at the final year.
+
+Wait, I should check if the `summarize_results` output is enough to answer "at the end".
+The question asks "at the end". I don't have that. I must say I can't answer it exactly but can provide the trend from the average.
+
+Actually, I will re-read the instructions.
+"If the question cannot be answered with these data, say so and say what would be needed."
+The data provided in the `summarize_results` tool output is the average over all years.
+I should state that the provided data represents the average debris over the full duration of the simulation, rather than the value specifically at the end. However, based on this average, there is a clear positive correlation between the number of launches and the debris levels.
+
+Wait, is there any way I could have gotten the "end" data?
+The `summarize_results` documentation says: "Pass unit=['run_id'] to average per run_id first, or fix the varying columns with filters."
+If I had a filter `{"year": 60}`, I would get the end.
+Since I cannot call more tools, I'll explain this.
+
+One detail: The standard deviation is quite large, especially for 60 launches (721). This suggests high variability between runs.
+
+Let's double check the 60 vs 70 thing.
+60: mean 1367.6, std 721.2
+70: mean 1077.8, std 215.3
+This is quite a big difference. 70 launches having a much lower mean and much lower standard deviation? That's weird.
+Wait, if 3 runs were performed, and one run had a very low debris count, it would pull the mean down.
+But if the SD is much lower, it means the 3 runs were much more consistent.
+This is likely just noise in the small sample size (3 runs per config).
+
+I'll write the final answer.
+
+Short Answer:
+Increasing the number of launches per year leads to a higher amount of debris. Based on the average debris levels over the entire simulation, the amount of debris increases from approximately 978 objects for 40 launches to 1,920 objects for 120 launches [tool].
+
+Evidence:
+- 40 launches: ~978 ± 229 [tool]
+- 60 launches: ~1,368 ± 721 [tool]
+- 70 launches: ~1,078 ± 215 [tool]
+- 80 launches: ~1,200 ± 364 [tool]
+- 90 launches: ~1,498 ± 376 [tool]
+- 100 launches: ~1,526 ± 496 [tool]
+- 120 launches: ~1,920 ± 544 [tool]
+(Note: The data represents the average debris across all years in the simulation, not specifically at the final year. The 70-launch case shows an anomalous dip in the mean, which may be due to the limited number of repetitions (3 per configuration).)
+
+Limits:
+The data provided is an average over the whole simulation period, so it does not specifically report the debris count at the very end. Additionally, the small number of repetitions (3 per configuration) means that individual random variations in a single run can significantly impact the results.
+
+Wait, I'll check if I can find the `n_rows` in the `runs` table.
+`runs` has 21 rows. 7 configs. $21/7 = 3$.
+The `summarize_results` says `n_rows` is 183.
+$61 \text{ years} \times 3 \text{ runs} = 183$.
+So yes, I have exactly 3 repetitions per configuration.
+
+Final check on "at the end".
+If I am a "careful, independent professional", I should admit I don't have the "at the end" value.
+"The amount of debris at the end of the simulation cannot be determined exactly from the provided summary, as the data represents the average debris over the entire simulation duration (years 0–60). However, the average debris levels show a clear upward trend as the number of launches per year increases..."
+
+I will stick to this.
+[/REASONING]
+================================== Ai Message ==================================
+
+Based on the available data, increasing the number of launches per year leads to an increase in the amount of debris. The average debris level across the entire simulation duration increases from approximately 978 objects for 40 launches per year to 1,920 objects for 120 launches per year [tool].
+
+**Evidence:**
+The following table summarizes the average debris across the simulation for each launch strategy. Note that the data represents the average over the full 61-year period, not specifically the final year:
+
+| Launches per year | Mean Debris (all years) | Std Dev [tool] |
+| :--- | :--- | :--- |
+| 40 | 978.0 | 229.3 |
+| 60 | 1,367.6 | 721.2 |
+| 70 | 1,077.9 | 215.3 |
+| 80 | 1,200.1 | 364.3 |
+| 90 | 1,497.9 | 375.9 |
+| 100 | 1,525.8 | 496.1 |
+| 120 | 1,920.5 | 544.3 |
+
+There is an anomalous dip in the mean debris for the 70-launch configuration compared to the 60-launch configuration, which is likely due to the high variability between the small number of repetitions (3 runs per configuration).
+
+**Limits:**
+* **Timeframe:** The provided data is the average debris over the entire simulation (years 0–60). It does not provide the specific debris count at the final time step of the simulation.
+* **Sample Size:** Each configuration is based on only 3 repetitions, meaning that random variations in a single run can significantly influence the mean and standard deviation.
+* **Model:** These results are from a teaching toy model and are not calibrated to represent real-world orbital debris dynamics.
