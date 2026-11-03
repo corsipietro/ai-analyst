@@ -103,6 +103,16 @@ python3 ../scripts/hard_points.py react rewoo repair react_26b rewoo_26b repair_
 - **One model family.** Both models are Gemma 4. ReAct and ReWOO also use slightly different instructions (`prompt=v3` vs `v4`), so the strategy is not the only difference between them.
 - **Code limits.** Only one provider is implemented (Ollama). The number checker traces values, sums and differences, but not products, ratios or units. Old tool results are not compacted in long conversations. `compare_groups` decides with Welch's t interval, which assumes roughly normal values within each group; the bootstrap interval is shown only with at least 30 values per group.
 
+## Status and next steps
+
+- **`tools.py` is too large** (about 1,300 lines for 7 tools). It grew with the fixes found during episode 1, and each
+  fix has a test, but the file is hard to read. It is frozen as the reference for the comparison below.
+- **Next: a flat view.** A format step turns the data into one clean table, checked by code, and the analyst keeps
+  only two tools: `query` (SQL on that table) and `calculate`. Branch `vista-piatta`. It will be compared with g5 on the
+  same bench, with the errors counted by source (data, tools, model).
+- If the flat view holds, `tools.py` will be retired (it stays in the git history); if it loses somewhere, only
+  the piece that matters comes back, with a test that shows why.
+
 ## Safety
 
 The DuckDB file is opened read-only; CSV/Parquet files are only read, into an in-memory copy (the files on disk are never written). After opening, DuckDB's external access is switched off and its configuration locked, so a query cannot read other files, write files or load extensions. Each `query_results` call runs one statement starting with `SELECT` or `WITH`. No code written by the model is ever executed: `calculate` parses arithmetic into a tree and evaluates only numbers and the basic operators.
