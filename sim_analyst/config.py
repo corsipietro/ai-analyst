@@ -12,7 +12,7 @@ from pathlib import Path
 
 import yaml
 
-ROOT = Path(__file__).resolve().parent.parent          # the repository root (settings.yaml and domains/ live here)
+ROOT = Path(__file__).resolve().parent.parent          # the sim_analyst/ repository folder
 SETTINGS_FILE = ROOT / "settings.yaml"
 DOMAINS_DIR = ROOT / "domains"
 PROMPTS_DIR = Path(__file__).resolve().parent / "prompts"

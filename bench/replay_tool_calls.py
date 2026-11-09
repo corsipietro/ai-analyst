@@ -4,7 +4,7 @@ For every tool call the planner or explorer made in a bench folder, it runs the 
 domain and compares the old outcome (read from the transcript) with the new one. It prints one line per
 call, then how many calls went from each old outcome to each new one, and the calls whose numbers changed.
 
-Usage (from the repository root):
+Usage (from the sim_analyst/ folder):
     python -m bench.replay_tool_calls bench/runs/20261031_0107_gen_rentals_* bench/runs/20261031_0127_gen_app_*
     python -m bench.replay_tool_calls bench/runs/20261030_2247_toy_shell_*_step2     (toy numbers must not change)
 
@@ -119,9 +119,15 @@ def numbers_in(value) -> set:
 
 
 def run_call(tools: dict, call: dict):
-    """Run one call through the LangChain tool (so the argument schema is checked too); return the result dict."""
+    """Run one call through the LangChain tool (so the argument schema is checked too); return the result dict.
+
+    Logs written before g5.1-d name the independent variable `time`: for the tools that now take `x`, it is renamed.
+    """
     try:
-        return tools[call["tool"]].invoke(call["args"])
+        args = call["args"]
+        if call["tool"] in ("summarize_results", "describe_trends", "compare_groups", "check_quality") and "time" in args and "x" not in args:
+            args = {("x" if k == "time" else k): v for k, v in args.items()}
+        return tools[call["tool"]].invoke(args)
     except KeyError:
         return {"error": f"unknown tool {call['tool']}", "error_type": "argument"}
     except Exception as exc:   # a schema refusal: the planner's step would have been refused too

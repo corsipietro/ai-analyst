@@ -1,0 +1,369 @@
+================================ Human Message =================================
+
+I have to present the results of the experiment saved in the database to my manager. Summarize what the data say and point out what is not solid.
+[REASONING]
+The user wants a summary of the results of the orbital shell experiment and an identification of what is not solid (uncertainties, noise, etc.).
+
+    *   The experiment involves two populations: active satellites (S) and debris (N).
+    *   There's a "greedy" strategy where `launches` per year was varied (40, 60, 70, 80, 90, 100, 120).
+    *   Each `launches` value was repeated with different seeds.
+    *   Data includes `satellites` (S) and `debris` (N) over a period of 60 years.
+    *   The goal is to see how S and N behave under different launch rates.
+
+    *   *Step 1: Data Quality.* Check the `runs` and `series` tables to ensure no major data issues (missing values, duplicates) affect the results.
+    *   *Step 2: Strategy Overview.* Identify the parameters for each run, specifically the `launches` values.
+    *   *Step 3: Temporal Evolution (Trends).* For each `launches` level, how do `satellites` and `debris` evolve over 60 years? This shows the general behavior (growth, stabilization, etc.).
+    *   *Step 4: Comparison.* Compare the final states of different launch rates to see if there's a significant difference.
+    *   *Step 5: Variability/Noise.* Check the standard deviation/variability within each launch group to see how reliable the results are.
+
+    *   *Call 1: `check_quality`.* Table `series`. Check for NULLs or issues in `value` and `metric`.
+    *   *Call 2: `summarize_results`.* Get the number of runs and the `launches` values to ensure we have a good sample size. Filter by `run_id` (or use `unit`) to count samples.
+    *   *Call 3: `describe_trends`.* Describe the evolution of `satellites` and `debris` over `year` for each `launches` value. This covers the "summary" part.
+    *   *Call 4: `compare_groups`.* Compare the final values of `satellites` (and `debris`) for different `launches` values (e.g., 40 vs 120) to see if the differences are significant.
+    *   *Call 5: `summarize_results`.* Calculate the variability (standard deviation) of `satellites` and `debris` for each `launches` value to identify what is "not solid" (the noise/uncertainty).
+
+    *   *Initial thought:* I should compare all launch rates.
+    *   *Correction:* That might be too many comparisons. I'll focus on the extremes (40, 60, 80, 100, 120) or the whole range to see the effect.
+    *   *Identifying "not solid":* This specifically refers to the standard deviation and the number of repetitions. I need to ensure the `unit` parameter is used correctly because each `run_id` has multiple years of data.
+
+    1.  `check_quality` for `series` to ensure data integrity.
+    2.  `summarize_results` for `launches` values (via `config.strategies[0].launches`) to see how many runs per launch rate.
+    3.  `describe_trends` for `satellites` and `debris` per `launch` level.
+    4.  `compare_groups` for `satellites` at the final year (60) across different `launches`.
+    5.  `summarize_results` to get standard deviation/spread per `launches` value to assess noise.
+
+    *   Query 1: `check_quality` on `series` table.
+    *   Query 2: `summarize_results` on `runs.config.strategies[0].launches` to identify the groups.
+    *   Query 3: `describe_trends` for `satellites` and `debris` grouped by `launches`.
+    *   Query 4: `compare_groups` for `satellites` between low (40) and high (120) `launches`.
+    *   Query 5: `summarize_results` for `satellites` and `debris` per `launches` to see standard deviation.
+
+    Wait, the prompt asks for a summary and what is "not solid".
+    - Summary: Trends, final values, differences between launch rates.
+    - Not solid: Variance, sample size (number of runs), and whether the differences are significant.
+
+    Let's refine the plan:
+    1. `check_quality` - check `series`.
+    2. `summarize_results` - counts per launch level (to see if any group is too small).
+    3. `describe_trends` - identify the behavior of S and N over time for each launch level.
+    4. `compare_groups` - check if high launch rates lead to significantly more debris/satellites.
+    5. `summarize_results` - calculate standard deviation to quantify uncertainty.
+
+    Let's group these.
+    Actually, `describe_trends` and `summarize_results` can provide enough info.
+
+    Steps:
+    1. `check_quality` (Table: `series`) - Ensure data is clean.
+    2. `summarize_results` (Value: `runs.config.strategies[0].launches`, Group by: `runs.config.strategies[0].launches`) - Check distribution of runs.
+    3. `describe_trends` (Value: `series.value`, x: `series.year`, Group by: `runs.config.strategies[0].launches`, Filter: `series.metric`="satellites") - See S trend.
+    4. `describe_trends` (Value: `series.value`, x: `series.year`, Group by: `runs.config.strategies[0].launches`, Filter: `series.metric`="debris") - See N trend.
+    5. `compare_groups` (Value: `series.value`, Group by: `runs.config.strategies[0].launches`, a: 40, b: 120, Filters: `series.metric`="satellites", `series.year`=60) - Compare extremes.
+    6. `summarize_results` (Value: `series.value`, Group by: `runs.config.strategies[0].launches`, Filters: `series.metric`="satellites") - Get standard deviation.
+
+    Wait, the `launches` column is a JSON path. I must use `json_extract_string` in `query_results` or check the `json_paths`.
+    The `json_paths` show: `config.strategies[0].launches`.
+    So `group_by` will be `runs.config.strategies[0].launches`.
+
+    *Constraint Check:* "Use only the data tools, at most 8 steps".
+    My plan has 6 steps.
+
+    *Refined Plan:*
+    1. `check_quality` - Table `series`.
+    2. `summarize_results` - Values of `runs.config.strategies[0].launches` to see how many runs per configuration.
+    3. `describe_trends` - `series.value` over `series.year` for `satellites` at each `launches` level.
+    4. `describe_trends` - `series.value` over `series.year` for `debris` at each `launches` level.
+    5. `compare_groups` - Compare `satellites` between `launches` 40 and 120 at year 60.
+    6. `summarize_results` - Standard deviation of `satellites` and `debris` per `launches` level to see "not solid" parts.
+
+    Wait, `describe_trends` for `series.value` with `metric` filter handles both S and N. I'll just run it for each.
+
+    One more thing: `run_id` is the unit because each run has many years.
+    So `unit` = `run_id`.
+
+    Actually, `describe_trends` handles `x` which is `year`.
+    And `group_by` which is `launches`.
+
+    Let's verify the labels.
+    `series.value` is the value.
+    `series.year` is the x.
+    `series.metric` = "satellites"
+    `runs.config.strategies[0].launches` is the group.
+
+    Wait, `summarize_results` for `launches` values:
+    `value`: `runs.config.strategies[0].launches`
+    `group_by`: `runs.config.strategies[0].launches`
+    This won't work because the value and group are the same.
+    I need `run_id` as a filter/group? No, I just want to know how many runs per launch level.
+    `summarize_results` with `value` as `runs.config.strategies[0].launches` and `group_by` as `runs.config.strategies[0].launches` will count rows.
+    Wait, one row = one run. So `n` of rows will be the number of runs.
+
+    Actually, let's just do:
+    1. `check_quality`
+    2. `summarize_results` (to check distribution of `launches`)
+    3. `describe_trends` (Satellites)
+    4. `describe_trends` (Debris)
+    5. `compare_groups` (High vs Low)
+    6. `summarize_results` (Std Dev)
+
+    Let's ensure `launches` is correctly identified.
+    `config.strategies[0].launches` is the path.
+
+    One detail: `series.value` depends on `series.metric`.
+    So I need to filter `series.metric`.
+
+    Step 1: `check_quality(table="series")`
+    Step 2: `summarize_results(value="runs.config.strategies[0].launches", group_by=["runs.config.strategies[0].launches"], table="runs")` - to see how many repetitions per launch level.
+    Step 3: `describe_trends(value="series.value", x="series.year", group_by=["runs.config.strategies[0].launches"], filters={"series.metric": "satellites"}, table="series")`
+    Step 4: `describe_trends(value="series.value", x="series.year", group_by=["runs.config.strategies[0].launches"], filters={"series.metric": "debris"}, table="series")`
+    Step 5: `compare_groups(value="series.value", group_by="runs.config.strategies[0].launches", a=40, b=120, filters={"series.metric": "satellites", "series.year": {"equals": 60}}, table="series")`
+    Step 6: `summarize_results(value="series.value", group_by=["runs.config.strategies[0].launches"], filters={"series.metric": "satellites"}, table="series")` - to get std/spread for "not solid" identification.
+
+    Wait, the `launches` values are 40, 60, 70, 80, 90, 100, 120.
+    The comparison is between 40 and 120.
+
+    One check: `describe_trends` returns "mean" of groups. Since `unit` is not provided, it might average over years? No, `x` is year, so it's mean at each year.
+    If I use `unit`, it averages rows within a unit. Since a unit (run) has only one value per year, `unit` is not needed for `describe_trends` where `x` is year.
+
+    Final check on "Not Solid":
+    I need to check the standard deviation and the sample size (number of repetitions).
+    If the number of repetitions is small, the results are less solid.
+
+    Total steps: 6.
+
+    Wait, `summarize_results` for `launches` values:
+    If I group by `launches` and take `value` as `launches`, the `n` will tell me how many runs per launch value.
+
+    Okay, let's write the plan.
+[/REASONING]
+================================== Ai Message ==================================
+
+1. check_quality: Verify data integrity, checking for NULL values or missing entries in the `value` and `metric` columns that could bias the results.
+2. summarize_results: Determine the number of repetitions (sample size) for each launch rate to assess the reliability of the results.
+3. describe_trends: Analyze how the number of active satellites (S) evolves over 60 years for each launch level.
+4. describe_trends: Analyze how the amount of debris (N) evolves over 60 years for each launch level.
+5. compare_groups: Determine if the difference between the lowest and highest launch rates is statistically significant at the end of the simulation (year 60).
+6. summarize_results: Calculate the standard deviation (variability) for each launch level to identify which results are 'not solid' due to high noise or low sample sizes.
+Tool Calls:
+  check_quality (step_1)
+ Call ID: step_1
+  Args:
+    table: series
+  summarize_results (step_2)
+ Call ID: step_2
+  Args:
+    value: runs.config.strategies[0].launches
+    group_by: ['runs.config.strategies[0].launches']
+    table: runs
+  describe_trends (step_3)
+ Call ID: step_3
+  Args:
+    value: series.value
+    x: series.year
+    group_by: ['runs.config.strategies[0].launches']
+    filters: {'series.metric': 'satellites'}
+    table: series
+  describe_trends (step_4)
+ Call ID: step_4
+  Args:
+    value: series.value
+    x: series.year
+    group_by: ['runs.config.strategies[0].launches']
+    filters: {'series.metric': 'debris'}
+    table: series
+  compare_groups (step_5)
+ Call ID: step_5
+  Args:
+    value: series.value
+    group_by: runs.config.strategies[0].launches
+    a: 40
+    b: 120
+    filters: {'series.metric': 'satellites', 'series.year': {'equals': 60}}
+    table: series
+  summarize_results (step_6)
+ Call ID: step_6
+  Args:
+    value: series.value
+    group_by: ['runs.config.strategies[0].launches']
+    filters: {'series.metric': 'satellites'}
+    table: series
+================================= Tool Message =================================
+Name: check_quality
+
+{"table": "series", "filters": {}, "group_by": [], "rows": 2562}
+================================= Tool Message =================================
+Name: summarize_results
+
+{"value": "runs.config.strategies[0].launches", "filters": {}, "group_by": ["runs.config.strategies[0].launches"], "columns": ["runs.config.strategies[0].launches", "n", "mean", "std", "min", "max", "n_rows", "n_null", "sum"], "rows": [[40, 3, 40, 0, 40, 40, 3, 0, 120], [60, 3, 60, 0, 60, 60, 3, 0, 180], [70, 3, 70, 0, 70, 70, 3, 0, 210], [80, 3, 80, 0, 80, 80, 3, 0, 240], [90, 3, 90, 0, 90, 90, 3, 0, 270], [100, 3, 100, 0, 100, 100, 3, 0, 300], [120, 3, 120, 0, 120, 120, 3, 0, 360]], "truncated": false}
+================================= Tool Message =================================
+Name: describe_trends
+
+{"value": "series.value", "filters": {"series.metric": "satellites"}, "group_by": ["runs.config.strategies[0].launches"], "x": "series.year", "step": 10, "explanation": "mean is over the observations (rows) of each group at each value of series.year; min and max, only in final, are over the observations at the last value; slope_last_part is a least-squares slope of the mean over the last 20% of the range, per unit of series.year; shape and turning points use the sampled series.", "groups": [{"group": {"series.metric": "satellites", "runs.config.strategies[0].launches": 40}, "observations": [3], "initial": {"x": 0, "mean": 1000}, "final": {"x": 60, "mean": 199, "min": 199, "max": 200, "spread": 1.24}, "max_of_mean": {"x": 0, "mean": 1000}, "min_of_mean": {"x": 38, "mean": 199}, "slope_last_part": {"from_x": 48, "to_x": 60, "slope_per_unit_of_x": 0.0307}, "shape_sampled": "decreasing", "turning_points_sampled": [], "series_sampled": {"columns": ["x", "mean"], "rows": [[0, 1000], [10, 284], [20, 208], [30, 199], [40, 199], [50, 199], [60, 199]]}}, {"group": {"series.metric": "satellites", "runs.config.strategies[0].launches": 60}, "observations": [3], "initial": {"x": 0, "mean": 1000}, "final": {"x": 60, "mean": 298, "min": 297, "max": 298, "spread": 1.39}, "max_of_mean": {"x": 0, "mean": 1000}, "min_of_mean": {"x": 31, "mean": 297}, "slope_last_part": {"from_x": 48, "to_x": 60, "slope_per_unit_of_x": -0.0784}, "shape_sampled": "not monotonic", "turning_points_sampled": [{"kind": "trough", "x": 30, "mean": 297}, {"kind": "peak", "x": 50, "mean": 299}], "series_sampled": {"columns": ["x", "mean"], "rows": [[0, 1000], [10, 372], [20, 304], [30, 297], [40, 298], [50, 299], [60, 298]]}}, {"group": {"series.metric": "satellites", "runs.config.strategies[0].launches": 70}, "observations": [3], "initial": {"x": 0, "mean": 1000}, "final": {"x": 60, "mean": 349, "min": 348, "max": 349, "spread": 1.26}, "max_of_mean": {"x": 0, "mean": 1000}, "min_of_mean": {"x": 40, "mean": 347}, "slope_last_part": {"from_x": 48, "to_x": 60, "slope_per_unit_of_x": 0.0355}, "shape_sampled": "not monotonic", "turning_points_sampled": [{"kind": "trough", "x": 40, "mean": 347}], "series_sampled": {"columns": ["x", "mean"], "rows": [[0, 1000], [10, 418], [20, 355], [30, 350], [40, 347], [50, 348], [60, 349]]}}, {"group": {"series.metric": "satellites", "runs.config.strategies[0].launches": 80}, "observations": [3], "initial": {"x": 0, "mean": 1000}, "final": {"x": 60, "mean": 399, "min": 398, "max": 400, "spread": 2.02}, "max_of_mean": {"x": 0, "mean": 1000}, "min_of_mean": {"x": 42, "mean": 397}, "slope_last_part": {"from_x": 48, "to_x": 60, "slope_per_unit_of_x": 0.0246}, "shape_sampled": "not monotonic", "turning_points_sampled": [{"kind": "trough", "x": 40, "mean": 397}], "series_sampled": {"columns": ["x", "mean"], "rows": [[0, 1000], [10, 462], [20, 404], [30, 399], [40, 397], [50, 398], [60, 399]]}}, {"group": {"series.metric": "satellites", "runs.config.strategies[0].launches": 90}, "observations": [3], "initial": {"x": 0, "mean": 1000}, "final": {"x": 60, "mean": 447, "min": 443, "max": 449, "spread": 6.28}, "max_of_mean": {"x": 0, "mean": 1000}, "min_of_mean": {"x": 56, "mean": 447}, "slope_last_part": {"from_x": 48, "to_x": 60, "slope_per_unit_of_x": -0.038}, "shape_sampled": "not monotonic", "turning_points_sampled": [{"kind": "trough", "x": 40, "mean": 447}, {"kind": "peak", "x": 50, "mean": 448}], "series_sampled": {"columns": ["x", "mean"], "rows": [[0, 1000], [10, 505], [20, 452], [30, 448], [40, 447], [50, 448], [60, 447]]}}, {"group": {"series.metric": "satellites", "runs.config.strategies[0].launches": 100}, "observations": [3], "initial": {"x": 0, "mean": 1000}, "final": {"x": 60, "mean": 495, "min": 493, "max": 497, "spread": 3.61}, "max_of_mean": {"x": 0, "mean": 1000}, "min_of_mean": {"x": 58, "mean": 494}, "slope_last_part": {"from_x": 48, "to_x": 60, "slope_per_unit_of_x": -0.229}, "shape_sampled": "not monotonic", "turning_points_sampled": [{"kind": "trough", "x": 30, "mean": 496}, {"kind": "peak", "x": 50, "mean": 497}], "series_sampled": {"columns": ["x", "mean"], "rows": [[0, 1000], [10, 550], [20, 502], [30, 496], [40, 496], [50, 497], [60, 495]]}}, {"group": {"series.metric": "satellites", "runs.config.strategies[0].launches": 120}, "observations": [3], "initial": {"x": 0, "mean": 1000}, "final": {"x": 60, "mean": 591, "min": 589, "max": 595, "spread": 5.91}, "max_of_mean": {"x": 0, "mean": 1000}, "min_of_mean": {"x": 59, "mean": 591}, "slope_last_part": {"from_x": 48, "to_x": 60, "slope_per_unit_of_x": -0.334}, "shape_sampled": "decreasing", "turning_points_sampled": [], "series_sampled": {"columns": ["x", "mean"], "rows": [[0, 1000], [10, 639], [20, 601], [30, 596], [40, 595], [50, 595], [60, 591]]}}], "notes": ["step enlarged to 10 to keep at most 11 points per group."]}
+================================= Tool Message =================================
+Name: describe_trends
+
+{"value": "series.value", "filters": {"series.metric": "debris"}, "group_by": ["runs.config.strategies[0].launches"], "x": "series.year", "step": 10, "explanation": "mean is over the observations (rows) of each group at each value of series.year; min and max, only in final, are over the observations at the last value; slope_last_part is a least-squares slope of the mean over the last 20% of the range, per unit of series.year; shape and turning points use the sampled series.", "groups": [{"group": {"series.metric": "debris", "runs.config.strategies[0].launches": 40}, "observations": [3], "initial": {"x": 0, "mean": 1000}, "final": {"x": 60, "mean": 570, "min": 420, "max": 722, "spread": 303}, "max_of_mean": {"x": 7, "mean": 1275}, "min_of_mean": {"x": 59, "mean": 559}, "slope_last_part": {"from_x": 48, "to_x": 60, "slope_per_unit_of_x": -18.2}, "shape_sampled": "not monotonic", "turning_points_sampled": [{"kind": "peak", "x": 10, "mean": 1128}, {"kind": "trough", "x": 20, "mean": 1061}, {"kind": "peak", "x": 30, "mean": 1079}], "series_sampled": {"columns": ["x", "mean"], "rows": [[0, 1000], [10, 1128], [20, 1061], [30, 1079], [40, 886], [50, 725], [60, 570]]}}, {"group": {"series.metric": "debris", "runs.config.strategies[0].launches": 60}, "observations": [3], "initial": {"x": 0, "mean": 1000}, "final": {"x": 60, "mean": 1212, "min": 617, "max": 1993, "spread": 1377}, "max_of_mean": {"x": 31, "mean": 1675}, "min_of_mean": {"x": 0, "mean": 1000}, "slope_last_part": {"from_x": 48, "to_x": 60, "slope_per_unit_of_x": -0.0309}, "shape_sampled": "not monotonic", "turning_points_sampled": [{"kind": "peak", "x": 30, "mean": 1640}, {"kind": "trough", "x": 50, "mean": 1162}], "series_sampled": {"columns": ["x", "mean"], "rows": [[0, 1000], [10, 1374], [20, 1436], [30, 1640], [40, 1422], [50, 1162], [60, 1212]]}}, {"group": {"series.metric": "debris", "runs.config.strategies[0].launches": 70}, "observations": [3], "initial": {"x": 0, "mean": 1000}, "final": {"x": 60, "mean": 976, "min": 834, "max": 1157, "spread": 323}, "max_of_mean": {"x": 19, "mean": 1235}, "min_of_mean": {"x": 33, "mean": 955}, "slope_last_part": {"from_x": 48, "to_x": 60, "slope_per_unit_of_x": -2.67}, "shape_sampled": "not monotonic", "turning_points_sampled": [{"kind": "peak", "x": 20, "mean": 1219}, {"kind": "trough", "x": 30, "mean": 1005}, {"kind": "peak", "x": 40, "mean": 1109}], "series_sampled": {"columns": ["x", "mean"], "rows": [[0, 1000], [10, 1097], [20, 1219], [30, 1005], [40, 1109], [50, 1059], [60, 976]]}}, {"group": {"series.metric": "debris", "runs.config.strategies[0].launches": 80}, "observations": [3], "initial": {"x": 0, "mean": 1000}, "final": {"x": 60, "mean": 1082, "min": 537, "max": 1474, "spread": 937}, "max_of_mean": {"x": 42, "mean": 1330}, "min_of_mean": {"x": 0, "mean": 1000}, "slope_last_part": {"from_x": 48, "to_x": 60, "slope_per_unit_of_x": -9.24}, "shape_sampled": "not monotonic", "turning_points_sampled": [{"kind": "peak", "x": 10, "mean": 1219}, {"kind": "trough", "x": 30, "mean": 1146}, {"kind": "peak", "x": 40, "mean": 1301}], "series_sampled": {"columns": ["x", "mean"], "rows": [[0, 1000], [10, 1219], [20, 1166], [30, 1146], [40, 1301], [50, 1220], [60, 1082]]}}, {"group": {"series.metric": "debris", "runs.config.strategies[0].launches": 90}, "observations": [3], "initial": {"x": 0, "mean": 1000}, "final": {"x": 60, "mean": 1436, "min": 786, "max": 2081, "spread": 1295}, "max_of_mean": {"x": 21, "mean": 1752}, "min_of_mean": {"x": 1, "mean": 993}, "slope_last_part": {"from_x": 48, "to_x": 60, "slope_per_unit_of_x": -1.75}, "shape_sampled": "not monotonic", "turning_points_sampled": [{"kind": "peak", "x": 20, "mean": 1720}, {"kind": "trough", "x": 50, "mean": 1394}], "series_sampled": {"columns": ["x", "mean"], "rows": [[0, 1000], [10, 1402], [20, 1720], [30, 1632], [40, 1582], [50, 1394], [60, 1436]]}}, {"group": {"series.metric": "debris", "runs.config.strategies[0].launches": 100}, "observations": [3], "initial": {"x": 0, "mean": 1000}, "final": {"x": 60, "mean": 1886, "min": 1071, "max": 2649, "spread": 1577}, "max_of_mean": {"x": 59, "mean": 1964}, "min_of_mean": {"x": 0, "mean": 1000}, "slope_last_part": {"from_x": 48, "to_x": 60, "slope_per_unit_of_x": 23.1}, "shape_sampled": "not monotonic", "turning_points_sampled": [{"kind": "peak", "x": 40, "mean": 1764}, {"kind": "trough", "x": 50, "mean": 1641}], "series_sampled": {"columns": ["x", "mean"], "rows": [[0, 1000], [10, 1339], [20, 1401], [30, 1598], [40, 1764], [50, 1641], [60, 1886]]}}, {"group": {"series.metric": "debris", "runs.config.strategies[0].launches": 120}, "observations": [3], "initial": {"x": 0, "mean": 1000}, "final": {"x": 60, "mean": 2827, "min": 1863, "max": 3461, "spread": 1598}, "max_of_mean": {"x": 60, "mean": 2827}, "min_of_mean": {"x": 0, "mean": 1000}, "slope_last_part": {"from_x": 48, "to_x": 60, "slope_per_unit_of_x": 53.5}, "shape_sampled": "increasing", "turning_points_sampled": [], "series_sampled": {"columns": ["x", "mean"], "rows": [[0, 1000], [10, 1521], [20, 1747], [30, 1957], [40, 2149], [50, 2221], [60, 2827]]}}], "notes": ["step enlarged to 10 to keep at most 11 points per group."]}
+================================= Tool Message =================================
+Name: compare_groups
+
+{"read_as": "{\"equals\": 60} read as the value 60.", "value": "series.value", "filters": {"series.metric": "satellites", "series.year": 60}, "group_by": "runs.config.strategies[0].launches", "at": null, "a": {"group": 40, "n": 3, "mean": 199, "min": 199, "max": 200}, "b": {"group": 120, "n": 3, "mean": 591, "min": 589, "max": 595}, "ranges_overlap": false, "method": "welch", "difference_b_minus_a": 392, "confidence": 0.95, "assumption": "Welch's t interval assumes values roughly normal within each group.", "interval": [385, 399], "degrees_of_freedom": 2.17, "verdict": "established"}
+================================= Tool Message =================================
+Name: summarize_results
+
+{"value": "series.value", "filters": {"series.metric": "satellites"}, "group_by": ["runs.config.strategies[0].launches"], "columns": ["runs.config.strategies[0].launches", "n", "mean", "std", "min", "max", "n_rows", "n_null", "sum"], "rows": [[40, 183, 264, 158, 198, 1000, 183, 0, 48318], [60, 183, 355, 139, 290, 1000, 183, 0, 64903], [70, 183, 401, 129, 345, 1000, 183, 0, 73433], [80, 183, 447, 119, 395, 1000, 183, 0, 81772], [90, 183, 492, 109, 443, 1000, 183, 0, 90033], [100, 183, 538, 99.5, 491, 1000, 183, 0, 98375], [120, 183, 628, 80, 589, 1000, 183, 0, 114942]], "truncated": false, "notes": ["rows repeat: a group holds up to 61 rows for the same run_id, so its rows are not independent observations (columns that vary within those rows: ['series.year']). Pass unit=[\"run_id\"] to average per run_id first, or fix the varying columns with filters."]}
+[REASONING]
+The user wants a summary of the experiment results, highlighting what the data says and what is not "solid" (i.e., has high variability or low sample size).
+
+    *   Number of runs per launch rate: 3 runs for each of the 7 launch levels (40, 60, 70, 80, 90, 100, 120). This is a very small sample size for evaluating stochastic processes.
+    *   Satellite (S) behavior:
+        *   Generally decreases over time for most launch rates.
+        *   Even at the highest launch rate (120), the final mean (591) is much lower than the initial (1000).
+        *   At the lowest launch rate (40), the satellite count drops to about 199.
+    *   Debris (N) behavior:
+        *   Higher launch rates lead to significantly more debris.
+        *   For the 120 launch rate, debris grows to a mean of 2827 at year 60.
+        *   The "not solid" part: The standard deviations for debris are very high.
+    *   Statistical Significance:
+        *   At year 60, the difference between 40 and 120 launches for satellites is statistically significant (p < 0.05, 95% confidence).
+
+    *   "Solid" results: The general trend of S and N over time is clear. The difference between the lowest and highest launch rates is statistically significant.
+    *   "Not solid" results:
+        *   Small sample size (n=3) means the variance between runs is barely captured.
+        *   High variability in debris counts: For 60 launches, the spread is 1377 (min 617, max 1993), which is extremely high relative to the mean.
+        *   For 90 launches, the debris spread is 1295 (min 786, max 2081).
+        *   The high standard deviation relative to the mean indicates that the "average" behavior of debris might be heavily influenced by specific random seeds in the few runs we have.
+
+    *   *Satellites:* The number of active satellites declines significantly across all launch rates. For the 120 launches/year case, the final mean is 591 [tool]. For the 40 launches/year case, it drops to 199 [tool].
+    *   *Debris:* Debris levels increase with launch rates. The 120 launches/year case ends with a mean of 2827 [tool].
+    *   *Reliability:* The results for debris are not solid due to very high variability and a low sample size (n=3) [context, tool]. Specifically, for the 60 launches/year case, the debris spread at year 60 is 1377 [tool], which is much larger than the mean of 1212 [tool].
+    *   *Statistical Significance:* The difference in final satellite counts between the 40 and 120 launch levels is statistically significant [tool].
+
+    *   Explain the 1000 -> 199 (40 launches) vs 1000 -> 591 (120 launches) drop.
+    *   Highlight the debris growth: 1000 -> 2827 (120 launches).
+    *   Point out the "not solid" part: high standard deviation in debris counts (e.g., 1377 for a mean of 1212).
+    *   Point out the small sample size (n=3).
+
+    *   No labels like "Total count" or "Summary".
+    *   Short answer first.
+    *   Evidence included.
+    *   Limitations included.
+
+    *   Wait, I should check the "not solid" part again. The 120 launches/year case for debris has a spread of 1598 (max 3461, min 1863) [tool]. This is huge.
+    *   The 90 launches/year case for debris has a spread of 1295 [tool].
+    *   The sample size is only 3 [tool].
+
+    Let's re-verify the values:
+    - 120 launches: Satellites mean ~591.
+    - 40 launches: Satellites mean ~199.
+    - 120 launches: Debris mean ~2827.
+    - 40 launches: Debris mean ~570.
+
+    Difference in satellites at year 60 between 40 and 120: 392 [tool] (statistically significant).
+
+    *Drafting final answer:*
+    The data shows that increasing the number of launches per year improves the final number of active satellites, but leads to a dramatic increase in orbital debris. Specifically, at a launch rate of 120/year, the average number of satellites is 591 [tool] compared to 199 [tool] for 40 launches/year. However, the debris counts are not "solid" because the sample size is very small (n=3) and the variability is extremely high.
+
+    *Supporting details:*
+    - **Satellite Trends:** For all launch rates, the number of satellites decreases from an initial 1000. The final mean for 120 launches/year is 591 [tool], while for 40 launches/year it is 199 [tool].
+    - **Debris Trends:** Debris grows significantly with higher launch rates. For 120 launches/year, the mean debris count reaches 2827 [tool] by year 60.
+    - **Uncertainty (The "Not Solid" part):** The debris data has extremely high variance. For example, at 60 launches/year, the debris mean is 1212 [tool], but the spread is 1377 [tool] (ranging from 617 to 1993). At 120 launches/year, the spread is 1598 [tool] (ranging from 1863 to 3461).
+    - **Statistical significance:** The difference in final satellite counts between 40 and 120 launches/year is statistically significant (p < 0.05) [tool].
+
+    *Limitations:*
+    - Conclusions are based on only 3 runs per configuration, which is insufficient to characterize the full range of possible outcomes for the stochastic collision model.
+    - The 60-year window may not be long enough to reach a steady state for some configurations.
+
+    Wait, the prompt says "Every number in the answer must come from a tool result, the context or the calculate tool."
+    - 591 [tool]
+    - 199 [tool]
+    - 2827 [tool]
+    - 570 [tool]
+    - 1377 [tool]
+    - 617 [tool]
+    - 1993 [tool]
+    - 1598 [tool]
+    - 1863 [tool]
+    - 3461 [tool]
+    - n=3 [tool]
+
+    All look good.
+
+    One more check: "Identify what is not solid".
+    The standard deviation/spread for debris is often larger than the mean itself (e.g., 60 launches/year: mean 1212, spread 1377). This means the "average" is not a reliable indicator of a single run's outcome.
+
+    *Final check of the prompt instructions:* "Restate for yourself what the question asks: which quantity, which cases, which comparison, which time or range."
+    Question: Summarize data and point out what is not solid.
+    Analysis: Compare launch rates (40 vs 120), Satellite counts (S), Debris counts (N), Year 0 to 60.
+
+    The result of `compare_groups` for 40 vs 120 launches at year 60:
+    - a (40): mean 199, min 199, max 200
+    - b (120): mean 591, min 589, max 595
+    - difference: 392
+    - confidence: 0.95
+    - verdict: established (statistically significant)
+
+    Final wording:
+    The data indicates that higher launch rates correlate with a higher final count of active satellites and a higher accumulation of debris. However, the debris estimates are not "solid" because the standard deviations are extremely high relative to the means, and the sample size is very small.
+
+    Evidence:
+    - **Satellite Count (S):** At the highest launch rate (120/year), the average number of satellites at year 60 is 591 [tool]. At the lowest rate (40/year), it is 199 [tool]. The difference of 392 [tool] is statistically significant at a 95% confidence level [tool].
+    - **Debris Count (N):** At 120 launches/year, the mean debris count is 2827 [tool]. At 40 launches/year, it is 570 [tool].
+    - **Reliability Concerns:** The debris data shows extreme variability. For 60 launches/year, the mean is 1212 [tool], but the spread is 1377 [tool] (min 617, max 1993). For 120 launches/year, the spread is 1598 [tool] (min 1863, max 3461). Because there are only 3 runs [tool] for each configuration, these high spreads suggest that the average value is not a reliable predictor of any single run's outcome.
+
+    Limits:
+    - The sample size (n=3) is too small to provide a stable estimate of the probability distribution of the results.
+    - The results only apply to the specific parameters of the model (e.g., $\alpha=10^{-6}$, $T=5$).
+
+    Wait, the tool output for `summarize_results` for `satellites` for 40 launches/year gave:
+    `{"group": {"series.metric": "satellites", "runs.config.strategies[0].launches": 40}, "observations": [3], "initial": {"x": 0, "mean": 1000}, "final": {"x": 60, "mean": 199, "min": 199, "max": 200, "spread": 1.24}, ...}`
+    So for 40 launches, the final mean is 199.
+    For 120 launches, the final mean is 591.
+
+    Wait, I should also mention that the satellite count decreases for *all* launch levels, even the highest one.
+    - 120 launches: 1000 -> 591
+    - 100 launches: 1000 -> 495
+    - 90 launches: 1000 -> 447
+    - 80 launches: 1000 -> 399
+    - 70 launches: 1000 -> 349
+    - 60 launches: 1000 -> 298
+    - 40 launches: 1000 -> 199
+
+    This is a very clear trend.
+
+    Final review of the instructions:
+    "No more data can be collected."
+    "Every number in the answer must come from a tool result, the context or the calculate tool."
+    "Mark each claim as [tool], [context], [computed] or [inference]."
+
+    The numbers:
+    - 591 [tool]
+    - 199 [tool]
+    - 1000 [context]
+    - 120 [context]
+    - 40 [context]
+    - 3 [tool]
+    - 2827 [tool]
+    - 570 [tool]
+    - 1212 [tool]
+    - 1377 [tool]
+    - 617 [tool]
+    - 1993 [tool]
+    - 1598 [tool]
+    - 1863 [tool]
+    - 3461 [tool]
+    - 392 [tool]
+
+    Everything is covered.
+[/REASONING]
+================================== Ai Message ==================================
+
+The data shows that increasing the number of launches per year leads to a higher final count of active satellites, but it also causes a significantly higher accumulation of orbital debris. However, the debris data is not "solid" because the variability (spread) is extremely high relative to the mean, and the sample size is very small.
+
+**Evidence:**
+*   **Satellite Count (S):** For all tested launch rates, the number of satellites decreases from the initial 1000 [context] over 60 years. At the highest launch rate (120/year), the final mean is 591 [tool], whereas at the lowest rate (40/year), it drops to 199 [tool]. The difference of 392 [tool] between these two levels is statistically significant at a 95% confidence level [tool].
+*   **Debris Count (N):** Debris levels increase with higher launch rates. At 120 launches/year, the final mean debris count is 2827 [tool], compared to 570 [tool] for 40 launches/year.
+*   **Lack of Stability:** The debris measurements are highly inconsistent. For the 60 launches/year case, the mean is 1212 [tool], but the spread is 1377 [tool] (ranging from 617 to 1993 [tool]). For 120 launches/year, the spread is 1598 [tool] (ranging from 1863 to 3461 [tool]). Because there are only 3 runs [tool] per configuration, these high spreads indicate that the "average" behavior is not a reliable predictor for any individual run.
+
+**Limitations:**
+*   The sample size of 3 runs per configuration is insufficient to determine the probability distribution of outcomes for this stochastic model.
+*   These results are limited to the specific model parameters (e.g., $\alpha=10^{-6}$, $T=5$ years) and do not represent real-world orbital conditions.
+*   To make the conclusion more solid, a significantly higher number of runs per launch rate would be required to narrow the confidence intervals.

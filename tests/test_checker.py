@@ -1,5 +1,5 @@
-"""Tests for checker.py, on numbers taken from real bench answers."""
-from sim_analyst.checker import check_numbers, extract_numbers, parse_number
+"""Tests for checker.py (ported from analyst/test_number_check.py), on numbers taken from the 29/10 bench runs (2a and 3a)."""
+from sim_analyst.checker import check_numbers, extract_numbers, parse_number, tool_marks_without_data
 
 TOOL = ('{"rows": [[40, 60, 3, 569.884, 419.517, 722.455], [60, 60, 3, 1211.517, 616.612, 1993.459], '
         '[70, 60, 3, 975.646, 834.367, 1157.467], [120, 60, 3, 2827.189, 1863.414, 3461.224]]}')
@@ -34,3 +34,12 @@ def test_invented_numbers_are_untraceable():
     """A mean that is not in the data (the 29/10 error 878.1) and a ratio are flagged."""
     result = check_numbers("The mean for 60 launches is 878.1, a ratio of 4.96.", [TOOL])
     assert result["untraceable_list"] == ["878.1", "4.96"]
+
+
+def test_tool_marks_without_data_counts_the_marks_only_when_nothing_was_read():
+    """[tool] in an answer written after failed reading steps is a measure of a claim without data."""
+    answer = "S = 400 [tool]. 3 [computed]"
+    assert tool_marks_without_data(answer, False) == 1
+    assert tool_marks_without_data(answer, True) == 0
+    assert tool_marks_without_data("a [tool] b [tool]", False) == 2
+    assert tool_marks_without_data("", False) == 0

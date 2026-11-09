@@ -1,6 +1,8 @@
 # Changelog of the tools
 
-`TOOLS_VERSION` in `sim_analyst/tools.py`. Episode 1 used **g5**. Dates are 2026.
+`TOOLS_VERSION` in `sim_analyst/tools.py`. Episode 1 used **g5**, episode 2 **g5.1**. Dates are 2026.
+
+- g5.1 (2-3/11; `TOOLS_VERSION` still reads `g5`, so the runs record `tools: g5`): `x` instead of `time`, and the tools work with any x (irregular, decimal, date, timestamp); every result repeats its filters and groups and names the metric it aggregates; a warning when a filter mixes several quantities; shorter sampled series and 3 significant digits; JSON paths written `a[0].b`; filters accept `x`, `at` and `equals`; groups describe themselves; the thresholds of the tools moved to `settings.yaml` (`analysis`); both ReWOO graphs repair a plan once when none of its steps read any data (`check_quality` counts as reading data). New question `gen_rentals` 4a, and a `defects` list in `domains/gen_rentals/bench.yaml`, both written before the runs. New: `bench/classify_errors.py` (wrong answers by source) and `bench/extract_to_read.py`.
 
 - g5 (31/10): the model declares, the code verifies. describe_database adds nulls, role (unique per row / repeats) and links (columns of other tables that contain the column's values, with the orphans); the mixing check only looks at text columns that are categories (not identifiers); the g4 refusal of several rows per unit is gone: summarize_results and compare_groups take 'unit' (average per unit first) and, without it, add a note on repeated rows (compare_groups then gives no verdict); describe_trends accepts a DATE/TIMESTAMP time with 'period'; new tool check_quality (NULLs, runs of NULLs, duplicates, text variants, numbers as text, orphans); summarize_results adds n_rows, n_null and sum.
 

@@ -6,9 +6,12 @@ A small AI data analyst that runs on a laptop: open models through [Ollama](http
 
 You give it a results database (DuckDB, or CSV/Parquet files) and a few lines of context, then you ask questions in plain language. The model chooses what to compute; the tools compute it and report what they find: empty values, units, how the tables link and whether a difference is larger than the noise.
 
-**Episode 1 in one line:** every setup caught about half of the hidden problems in the data; no setup wins (table below).
+**Episode 1 in one line:** every setup caught about half of the hidden problems in the data; no setup wins.
+**Episode 2 in one line:** 17 of the 27 wrong answers came from the 3 questions on data with a hidden flaw (47% wrong there, 4% elsewhere).
 
-This repository holds the code and the full evidence of **episode 1** of a LinkedIn series on how far you can trust an AI's answers: 6 setups (2 models × 3 strategies), 5 datasets, 252 answers.
+This repository holds the code and the full evidence of the first two episodes of a LinkedIn series on how AI agents fail, on a system I built and can open up: 6 setups (2 models × 3 strategies), 5 datasets; 252 answers in episode 1, 264 in episode 2.
+
+The code on `main` is the one of episode 2 (tools g5.1). Episode 1 used the g5 tools: `git checkout episode1` gives that exact code.
 
 ## How it works
 
@@ -59,7 +62,7 @@ python -m sim_analyst ask --domain toy_shell "How does the debris at year 60 dep
 python -m bench.run_bench --domain toy_shell --reps 2      # the domain's test bench -> bench/runs/
 ```
 
-With the default `settings.yaml` the analyst runs a ReAct-style graph with a non-reasoning explorer: this is not one of the six episode 1 setups. For those, use the `--set` options in `results/episode1/reproduce.sh`.
+With the default `settings.yaml` the analyst runs a ReAct-style graph with a non-reasoning explorer: this is not one of the six episode 1 setups. For those, use the `--set` options in `results/episode2/reproduce.sh` (or `results/episode1/reproduce.sh` on the `episode1` tag).
 
 **A new dataset:** copy `domains/toy_shell/`, edit `context.md` and the `data` section of `config.yaml` (a DuckDB file, or one Parquet/CSV file per table), and optionally write a `bench.yaml` with questions and expected answers.
 
@@ -92,7 +95,32 @@ python3 ../scripts/post_numbers.py          # -> the table above (summary.csv)
 python3 ../scripts/hard_points.py react rewoo repair react_26b rewoo_26b repair_26b
 ```
 
-**How to rerun the bench:** `bash results/episode1/reproduce.sh` (all 30 runs, several hours on a laptop). New runs are saved in `bench/runs/`: run the counting scripts from there. Model outputs are sampled at temperature 1, so a rerun gives different transcripts and somewhat different counts.
+**How to rerun the bench:** `git checkout episode1`, then `bash results/episode1/reproduce.sh` (all 30 runs, several hours on a laptop). New runs are saved in `bench/runs/`: run the counting scripts from there. Model outputs are sampled at temperature 1, so a rerun gives different transcripts and somewhat different counts.
+
+## Episode 2: results
+
+**Setup.** The same 6 setups and datasets, with clearer tools (g5.1, see `CHANGELOG.md`) and one new question
+(`gen_rentals` 4a): 22 questions × 2 seeds × 6 setups = 264 answers. This time every wrong answer is also classified
+by its source: a flaw in the data, the limits of the tools, or the model's reasoning.
+
+| Model | Strategy | Wrong / 44 | data / tools / model | Free-SQL share of tool calls |
+|---|---|---|---|---|
+| 12B | ReAct | 8 | 3 / 1 / 4 | 30% |
+| 12B | ReWOO | 3 | 0 / 1 / 2 | 13% |
+| 12B | ReWOO + repair | 4 | 0 / 2 / 2 | 17% |
+| 26B | ReAct | 4 | 4 / 0 / 0 | 45% |
+| 26B | ReWOO | 5 | 3 / 2 / 0 | 18% |
+| 26B | ReWOO + repair | 3 | 3 / 0 / 0 | 18% |
+
+**What these numbers say:**
+- A flaw in the data matters more than the model or the strategy: 17/36 wrong on the 3 flawed questions, 10/228 on the others.
+- One station is listed twice. The question that joins with it (4a) is wrong in 12/12 answers, every setup, both seeds;
+  a question on the same data that does not need that table (2a) is right in 12/12.
+- The 12B fails mostly on its own reasoning (8 of 15), the 26B mostly walks into the flaws in the data (10 of 12).
+- 46-72% of the tokens go into figuring out the data, again at every question; 91-97% of the time is the model writing.
+
+Full counts, how answers were graded and the limits: `results/episode2/README.md`. To reproduce every number of the
+post from the saved transcripts (no model needed): `python3 -B results/episode2/scripts/post_numbers.py`.
 
 ## Limits
 
@@ -105,13 +133,13 @@ python3 ../scripts/hard_points.py react rewoo repair react_26b rewoo_26b repair_
 
 ## Status and next steps
 
-- **`tools.py` is too large** (about 1,300 lines for 7 tools). It grew with the fixes found during episode 1, and each
-  fix has a test, but the file is hard to read. It is frozen as the reference for the comparison below.
-- **Next: a flat view.** A format step turns the data into one clean table, checked by code, and the analyst keeps
-  only two tools: `query` (SQL on that table) and `calculate`. Branch `vista-piatta`. It will be compared with g5 on the
-  same bench, with the errors counted by source (data, tools, model).
-- If the flat view holds, `tools.py` will be retired (it stays in the git history); if it loses somewhere, only
-  the piece that matters comes back, with a test that shows why.
+- **This code is frozen.** It is the "before" for the next comparisons: one agent that, at every question, explores,
+  cleans, interprets and answers. `tools.py` (about 1,800 lines) grew with every fix, each with a test.
+- **A flat view was tried and set aside** (one clean table, two tools): in a short probe most errors came from the
+  texts the model reads, written at different times for different readers.
+- **Next: Archimede**, a workflow instead of one agent, built from scratch: *Prepare* the data once per dataset
+  (AI + code), *Analyze* with two tools (`query`, `calculate`), *Review* the answer with code (every number must come
+  from the data). Each step gets its own test; then the same questions, compared with these 264 answers.
 
 ## Safety
 
@@ -122,12 +150,13 @@ The DuckDB file is opened read-only; CSV/Parquet files are only read, into an in
 ```
 sim_analyst/        the analyst: tools, graphs (ReAct, ReWOO, repair), prompts, number checker
 domains/            one folder per dataset: context.md, config.yaml, bench.yaml (questions + expected answers)
-bench/              bench runner, blind grading helpers, rubric
+bench/              bench runner, blind grading helpers, rubric, error classifier
 tests/              pytest suite (runs on a small fake database, no model needed)
 data/toy_shell/     frozen results of the toy simulation (DuckDB)
 data/synthetic/     the 4 synthetic datasets (CSV) + SHA256SUMS.txt
 results/episode1/   transcripts of all 30 runs, grading, counting scripts, summary
-CHANGELOG.md        version history of the tools (episode 1 used g5)
+results/episode2/   the same for episode 2, plus the post's numbers (numbers.txt, numbers.json)
+CHANGELOG.md        version history of the tools (episode 1 used g5, episode 2 g5.1)
 ```
 
 ## Data

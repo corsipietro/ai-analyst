@@ -13,12 +13,16 @@ import numpy as np
 from scipy import stats as scipy_stats
 
 
-def clean(value):
-    """Make one value fit in JSON, and round floats to 3 decimals (integer-valued floats become int: 40.0 -> 40).
+KEY_DIGITS = 12   # significant digits for data values used as keys (groups, values of x, filters): only float noise is removed
+
+
+def clean(value, digits: int = 3):
+    """Make one value fit in JSON, and round floats to `digits` significant digits (integer-valued floats become int).
 
     This is the one place where values coming from the database are made JSON-safe, because every
     tool result goes through it: dates, datetimes and times become ISO strings, a timedelta a
-    string, a Decimal a float, a UUID a string and bytes a hex string.
+    string, a Decimal a float, a UUID a string and bytes a hex string. Rounding never cuts the
+    integer part (977.969 -> 978, 1.23456 -> 1.23, 1e-06 stays 1e-06).
     """
     if isinstance(value, (datetime.date, datetime.time)):        # datetime is a date
         return value.isoformat()
@@ -31,9 +35,11 @@ def clean(value):
     if isinstance(value, float):
         if math.isnan(value) or math.isinf(value):
             return None
+        if value != 0:
+            value = round(value, max(0, digits - 1 - math.floor(math.log10(abs(value)))))
         if value.is_integer() and abs(value) < 1e15:
             return int(value)
-        return round(value, 3)
+        return value
     return value
 
 
@@ -47,9 +53,9 @@ def round_significant(value, digits: int = 12):
     return float(f"{value:.{digits}g}")
 
 
-def clean_row(row) -> list:
-    """Apply clean() to every value of a row."""
-    return [clean(v) for v in row]
+def clean_row(row, n_keys: int = 0) -> list:
+    """Apply clean() to every value of a row: the first n_keys values are data (KEY_DIGITS), the others measures."""
+    return [clean(v, KEY_DIGITS if i < n_keys else 3) for i, v in enumerate(row)]
 
 
 def nice_step(span: float, target_points: int = 12) -> float:
@@ -75,19 +81,33 @@ def linear_slope(xs: list[float], ys: list[float]) -> float | None:
     return float((x_centered * (y - y.mean())).sum() / (x_centered ** 2).sum())
 
 
-def sample_points(points: list[tuple], step: float, start: float) -> list[tuple]:
-    """Keep the points whose time is start + k*step, plus always the last point."""
-    kept = [p for p in points if abs(((p[0] - start) / step) - round((p[0] - start) / step)) < 1e-9]
-    if points and (not kept or kept[-1][0] != points[-1][0]):
+def sample_points(points: list[tuple], step: float, start: float, per_group: int | None = None,
+                  tolerance: float = 1e-9) -> list[tuple]:
+    """Thin a series to about one point per `step` of x, always keeping the last point.
+
+    With `per_group` (the most points the normal sampling would give) given and at most that many points, all are kept (irregular x, such as
+    20, 50, 80, 120, 200, 400, must not lose points). Otherwise the range is cut into intervals of width
+    `step` starting at `start`, and the first point of every non-empty interval is kept. For x on the
+    grid start + k*step this is the same as keeping the points exactly on the grid.
+    """
+    if per_group is not None and len(points) <= per_group:
+        return list(points)
+    kept, seen = [], set()
+    for p in points:
+        interval = math.floor((p[0] - start) / step + tolerance)
+        if interval not in seen:
+            seen.add(interval)
+            kept.append(p)
+    if points and kept[-1][0] != points[-1][0]:
         kept.append(points[-1])
     return kept
 
 
-def turning_points(times: list[float], means: list[float]) -> list[dict]:
-    """Return the times where the series stops rising and starts falling (peak) or the reverse (trough).
+def turning_points(xs: list[float], means: list[float]) -> list[dict]:
+    """Return the values of x where the series stops rising and starts falling (peak) or the reverse (trough).
 
     Flat steps (equal consecutive values) are skipped when deciding the direction, so a flat
-    top or bottom is reported at its first time.
+    top or bottom is reported at its first x.
     """
     turns = []
     previous_sign, previous_index = 0, 0
@@ -98,7 +118,7 @@ def turning_points(times: list[float], means: list[float]) -> list[dict]:
             continue
         if previous_sign and sign != previous_sign:
             kind = "peak" if previous_sign > 0 else "trough"
-            turns.append({"kind": kind, "time": times[previous_index], "mean": means[previous_index]})
+            turns.append({"kind": kind, "x": xs[previous_index], "mean": means[previous_index]})
         previous_sign, previous_index = sign, i
     return turns
 
@@ -116,40 +136,42 @@ def shape_of(means: list[float]) -> str:
 
 
 def trend_summary(points: list[tuple], step: float, last_fraction: float = 0.2,
-                  sampled: list[tuple] | None = None) -> dict:
-    """Summarize one group's series of (time, n, mean, min, max), sorted by time.
+                  sampled: list[tuple] | None = None, per_group: int | None = None) -> dict:
+    """Summarize one group's series of (x, n, mean, min, max), sorted by x.
 
-    Returns initial and final values, maximum and minimum of the mean with their times,
-    the slope of the mean over the last part of the time range (least squares),
-    the shape and the turning points of the series sampled at `step`, and the sampled series.
-    `sampled` replaces the sampling at `step` when the points are not regularly spaced (months).
+    Returns initial and final values, maximum and minimum of the mean with their x,
+    the slope of the mean over the last part of the range of x (least squares),
+    the shape and the turning points of the series sampled at `step`, and the sampled series (x and mean).
+    `sampled` replaces the sampling at `step` when the points are not regularly spaced (months); with
+    `per_group`, a series of at most that many points is not sampled (see sample_points).
+    Shape and turning points are computed on the means rounded to 3 significant digits (the numbers the
+    model sees), so a difference of 1e-12 is not a peak.
     """
-    times = [p[0] for p in points]
+    xs = [p[0] for p in points]
     means = [p[2] for p in points]
-    start, end = times[0], times[-1]
+    start, end = xs[0], xs[-1]
     i_max = max(range(len(means)), key=means.__getitem__)
     i_min = min(range(len(means)), key=means.__getitem__)
     cut = end - last_fraction * (end - start)
-    tail = [(t, m) for t, m in zip(times, means) if t >= cut]
+    tail = [(t, m) for t, m in zip(xs, means) if t >= cut]
     if len(tail) < 3:
-        tail = list(zip(times, means))[-3:]
-    sampled = sample_points(points, step, start) if sampled is None else sampled
-    s_times = [p[0] for p in sampled]
-    s_means = [p[2] for p in sampled]
+        tail = list(zip(xs, means))[-3:]
+    sampled = sample_points(points, step, start, per_group) if sampled is None else sampled
+    s_xs = [p[0] for p in sampled]
+    s_means = [clean(p[2]) for p in sampled]
     first, last = points[0], points[-1]
     return {
         "observations": sorted({p[1] for p in points}),
-        "initial": {"time": first[0], "mean": first[2]},
-        "final": {"time": last[0], "mean": last[2], "min": last[3], "max": last[4],
+        "initial": {"x": first[0], "mean": first[2]},
+        "final": {"x": last[0], "mean": last[2], "min": last[3], "max": last[4],
                   "spread": last[4] - last[3]},
-        "max_of_mean": {"time": times[i_max], "mean": means[i_max]},
-        "min_of_mean": {"time": times[i_min], "mean": means[i_min]},
-        "slope_last_part": {"from_time": tail[0][0], "to_time": tail[-1][0],
-                            "slope_per_time_unit": linear_slope([t for t, _ in tail], [m for _, m in tail])},
+        "max_of_mean": {"x": xs[i_max], "mean": means[i_max]},
+        "min_of_mean": {"x": xs[i_min], "mean": means[i_min]},
+        "slope_last_part": {"from_x": tail[0][0], "to_x": tail[-1][0],
+                            "slope_per_unit_of_x": linear_slope([t for t, _ in tail], [m for _, m in tail])},
         "shape_sampled": shape_of(s_means),
-        "turning_points_sampled": turning_points(s_times, s_means),
-        "series_sampled": {"columns": ["time", "n", "mean", "min", "max"],
-                           "rows": [list(p) for p in sampled]},
+        "turning_points_sampled": turning_points(s_xs, s_means),
+        "series_sampled": {"columns": ["x", "mean"], "rows": [[p[0], p[2]] for p in sampled]},
     }
 
 

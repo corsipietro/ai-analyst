@@ -1,12 +1,12 @@
 """Generic test bench: asks a domain's bench questions and records everything needed to grade them.
 
-Usage (from the repository root):
+Usage (from the sim_analyst/ folder):
     python -m bench.run_bench --domain toy_shell --reps 2 3a 3b 3c    (some questions)
     python -m bench.run_bench --domain toy_shell --reps 2            (all questions)
 
 For each question x repetition (seed = repetition number) it saves the transcript with the hidden
 reasoning, one JSONL record (versions, settings, timings, tool use, tool errors by kind, numbers
-checked) and a log. Grading is done outside the bench, against bench.yaml: the bench measures the SYSTEM
+checked) and a log. Grading is done by a person, against bench.yaml: the bench measures the SYSTEM
 (model + tools + instructions + context), not the model alone.
 """
 from __future__ import annotations
@@ -23,9 +23,9 @@ from pathlib import Path
 from langchain_core.messages import HumanMessage
 from langgraph.errors import GraphRecursionError
 
-from sim_analyst.checker import check_numbers
+from sim_analyst.checker import check_numbers, tool_marks_without_data
 from sim_analyst.config import PROMPTS_DIR, ROOT, load_yaml, parse_override_items, parse_overrides, sha256_of
-from sim_analyst.graph import HANDOFF_MARK, open_analyst
+from sim_analyst.graph import ANSWER_TOOLS, HANDOFF_MARK, data_retrieved, open_analyst
 from sim_analyst.graphs import ANSWER_ROLE, build_graph, graph_name
 from sim_analyst.tools import TOOLS_VERSION
 
@@ -179,7 +179,8 @@ def model_calls(messages: list) -> list[dict]:
     for m in messages:
         if m.type == "ai":
             meta = m.response_metadata
-            calls.append({"node": node_of(m), **{k: meta.get(k, 0) or 0 for k in CALL_FIELDS}})
+            calls.append({"node": node_of(m), **{k: meta.get(k, 0) or 0 for k in CALL_FIELDS},
+                          "done_reason": meta.get("done_reason", "") or ""})
             calls += meta.get("discarded_calls", [])
         elif m.type == "human":
             calls += m.additional_kwargs.get("discarded_calls", [])
@@ -215,6 +216,8 @@ def model_record(messages: list) -> dict:
         "empty_answer": not ai or not str(ai[-1].content).strip(),
         "empty_retries": sum(1 for c in calls if c.get("reason") == "empty_retry"),
         "handoffs": sum(1 for m in messages if m.type == "human" and str(m.content).startswith(HANDOFF_MARK)),
+        "answer_from_no_think_retry": bool(ai) and ai[-1].response_metadata.get("empty_retry_mode") == "no_think",
+        "length_stops": sum(1 for c in calls if c.get("done_reason") == "length"),
         "per_node": per_node_record(calls),
     }
 
@@ -250,7 +253,7 @@ def repair_record(messages: list) -> dict:
 
     steps_failed_before_repair: failed steps of the first plan. steps_repaired: steps written by the repair node.
     steps_failed_after_repair: failed steps among those repair steps (a first-plan step that was not
-    replaced is not counted again).
+    replaced is not counted again). no_data_repairs: repair rounds made because no step read the data.
     """
     plans = []
     for m in messages:
@@ -265,7 +268,14 @@ def repair_record(messages: list) -> dict:
             "steps_repaired": sum(len(p[0].tool_calls) for p in repairs),
             "steps_failed_before_repair": failed(first[1]),
             "steps_failed_after_repair": sum(failed(p[1]) for p in repairs),
-            "repair_rejections": sum(len(p[0].response_metadata.get("repair_rejections", [])) for p in repairs)}
+            "repair_rejections": sum(len(p[0].response_metadata.get("repair_rejections", [])) for p in repairs),
+            "no_data_repairs": sum(1 for p in repairs if p[0].response_metadata.get("repair_reason") == "no_data")}
+
+
+def data_record(messages: list, answer: str) -> dict:
+    """Whether any step that gives data (ANSWER_TOOLS, as for the header) worked, and the [tool] marks if none did."""
+    retrieved = data_retrieved(messages, ANSWER_TOOLS)
+    return {"data_retrieved": retrieved, "tool_marks_without_data": tool_marks_without_data(answer, retrieved)}
 
 
 def number_sources(messages: list, analyst) -> list[str]:
@@ -347,9 +357,9 @@ def main() -> None:
             record = {"question": qid, "rep": rep, "seed": rep, "domain": analyst.domain.name, "mode": bench.get("mode"),
                       **versions, "provider": settings["provider"], "roles": settings["roles"],
                       "answer_language": settings["answer_language"], "ending": ending, "seconds": seconds,
-                      **model_record(messages), **tool_record(messages), **numbers,
+                      **model_record(messages), **tool_record(messages), **numbers, **data_record(messages, answer),
                       **(rewoo_record(messages) if graph_id in ("rewoo", "rewoo_repair") else {}),
-                      **(repair_record(messages) if graph_id == "rewoo_repair" else {})}
+                      **(repair_record(messages) if graph_id in ("rewoo", "rewoo_repair") else {})}
             with open(run_dir / "runs.jsonl", "a", encoding="utf-8") as f:
                 f.write(json.dumps(record, ensure_ascii=False) + "\n")
             ok = ending == "ok" and not record["empty_answer"]
@@ -360,6 +370,9 @@ def main() -> None:
                     f"{record['handoffs']} handoffs"
                     + ("" if ok else " | NO ANSWER"))
             (log.info if ok and not record["tool_errors"] else log.warning)(line)
+            if not record["data_retrieved"]:
+                log.warning(f"WARNING {label} | no step that reads the data gave a result "
+                            f"({record['tool_marks_without_data']} [tool] marks in the answer)")
             if numbers:
                 nums = (f"NUMS  {label} | {numbers['numbers_cited']} cited: {numbers['numbers_direct']} direct, "
                         f"{numbers['numbers_derived']} derived, {numbers['numbers_untraceable']} untraceable")

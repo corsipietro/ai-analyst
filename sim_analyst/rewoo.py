@@ -25,7 +25,8 @@ from langgraph.graph import END, START, MessagesState, StateGraph
 from langgraph.prebuilt import ToolNode
 from pydantic import BaseModel, Field, ValidationError
 
-from .graph import EMPTY_RETRY_DEFAULT, call_metadata, invoke_with_retries
+from .graph import (EMPTY_RETRY_DEFAULT, EMPTY_RETRY_NOTES_DEFAULT, call_metadata, data_retrieved, empty_retry_mode,
+                    invoke_with_retries, step_error_text, with_no_data_header)
 from .llm import make_chat_model
 from .tool_schemas import ARGS_SCHEMAS, DESCRIPTIONS
 
@@ -36,6 +37,10 @@ REPAIR_RETRY_DEFAULT = ("Your repair steps were refused for these reasons: {prob
                         "again, fixing them; do not repeat the steps that worked.")
 REPAIR_DEFAULT = ("Some steps of your plan failed. Read each error: it says what to change. Write only the steps that "
                   "replace the failed ones, with corrected arguments; do not repeat the steps that worked.")
+REPAIR_NO_DATA_DEFAULT = ("No step of your plan read the data: every call to summarize_results, describe_trends, "
+                          "compare_groups or query_results failed, or there was none. Read each error: it says what "
+                          "to change. Write the steps that read the data the question needs, with corrected arguments; "
+                          "do not repeat the steps that worked.")
 
 
 class Step(BaseModel):
@@ -167,13 +172,14 @@ def check_plan(result: dict) -> tuple[list[Step], list[str], int]:
 # ---------------------------------------------------------------- the messages of the graph
 
 def plan_message(raw: AIMessage, steps: list[Step], rejections: list[list[str]], discarded: list[dict],
-                 why_in_args: int = 0, node: str = "plan", round_number: int = 0) -> AIMessage:
+                 why_in_args: int = 0, node: str = "plan", round_number: int = 0, reason: str = "") -> AIMessage:
     """The plan as ONE model message: the steps are its tool calls, the reasons are its text.
 
     It keeps the planner's reasoning and its token/time metadata, and records what the bench counts:
     the rejected attempts, the retry made and the measures of the discarded first attempt.
     The repair node writes the same message with node="repair": its call ids start with "repair{n}_"
-    (n = the round, from 1) and its counts are called repair_rejections / repair_retries.
+    (n = the round, from 1) and its counts are called repair_rejections / repair_retries; its metadata also
+    has repair_reason ("failed_steps" or "no_data").
     """
     prefix = "step" if node == "plan" else f"{node}{round_number}_step"
     calls = [{"name": s.tool, "args": s.args, "id": f"{prefix}_{i}", "type": "tool_call"}
@@ -181,7 +187,7 @@ def plan_message(raw: AIMessage, steps: list[Step], rejections: list[list[str]],
     reasons = "\n".join(f"{i}. {s.tool}: {s.why}" for i, s in enumerate(steps, start=1))
     metadata = {**raw.response_metadata, "node": node, f"{node}_rejections": rejections,
                 f"{node}_retries": len(discarded), "discarded_calls": discarded,
-                "why_in_args": why_in_args}
+                "why_in_args": why_in_args, **({"repair_reason": reason} if reason else {})}
     return AIMessage(content=reasons, tool_calls=calls, additional_kwargs=dict(raw.additional_kwargs),
                      response_metadata=metadata)
 
@@ -199,20 +205,6 @@ def run_steps(tools: dict, plan: AIMessage) -> list[ToolMessage]:
             messages.append(ToolMessage(content=f"Error: {type(exc).__name__}: {exc}", name=call["name"],
                                         tool_call_id=call["id"], status="error"))
     return messages
-
-
-def step_error_text(message: ToolMessage) -> str | None:
-    """None if the step's result is a result (notes and warnings included), else the text of its error."""
-    content = message.content if isinstance(message.content, str) else json.dumps(message.content)
-    try:
-        data = json.loads(content)
-    except ValueError:
-        data = None
-    if isinstance(data, dict) and "error" in data:
-        return str(data["error"])
-    if message.status == "error" or (data is None and content.lower().startswith("error")):
-        return content
-    return None
 
 
 def executed_plans(messages: list) -> list[tuple[AIMessage, list[ToolMessage]]]:
@@ -256,11 +248,15 @@ def count_calculations(messages: list) -> int:
 
 
 def make_rewoo_graph(analyst, seed: int, repair: bool = False):
-    """Build and compile the graph: plan -> execute -> analyze <-> calculate -> END.
+    """Build and compile the graph: plan -> execute -> (repair) -> analyze <-> calculate -> END.
 
-    With repair (graph "rewoo_repair"): after execute, if a step failed and fewer than limits.repair_rounds
-    rounds were done, the repair node writes replacement steps for the failed ones, execute runs only those,
-    and the analyst sees all the results. Without repair the graph is the plain ReWOO graph.
+    After execute the code chooses (repair_reason):
+    - with repair (graph "rewoo_repair"): a step failed and fewer than limits.repair_rounds rounds were done:
+      "failed_steps". The repair node writes replacement steps for the failed ones, execute runs only those,
+      and the analyst sees all the results;
+    - in both graphs: no step that reads the data (graph.READING_TOOLS) gave a result and no repair was done:
+      "no_data", one round, asking for steps that read the data;
+    - otherwise the analyst answers. If it still has no data, graph.NO_DATA_HEADER opens its answer.
     """
     settings = analyst.domain.settings
     system = SystemMessage(content=analyst.system_text)
@@ -274,9 +270,16 @@ def make_rewoo_graph(analyst, seed: int, repair: bool = False):
     analyze_request = analyst.roles["analyze"]
     empty_retry_request = analyst.roles.get("empty_retry", EMPTY_RETRY_DEFAULT)
     max_empty_retries = settings["limits"].get("empty_retries", 1)
+    no_think = empty_retry_mode(settings) == "no_think"
+    analyst_reasoning = bool(settings["roles"]["analyst"].get("reasoning", False))
+    notes_request = analyst.roles.get("empty_retry_notes", EMPTY_RETRY_NOTES_DEFAULT)
+    if no_think:
+        quiet_model = make_chat_model(settings["provider"], {**settings["roles"]["analyst"], "reasoning": False}, seed)
+        quiet_with_calculate = quiet_model.bind_tools([tools[CALCULATE]])
     max_calculations = settings["limits"].get("calculate_calls", 8)
     max_repairs = settings["limits"].get("repair_rounds", 1)
     repair_role = analyst.roles.get("repair", REPAIR_DEFAULT)
+    repair_no_data_role = analyst.roles.get("repair_no_data", REPAIR_NO_DATA_DEFAULT)
     repair_retry_request = analyst.roles.get("repair_retry", REPAIR_RETRY_DEFAULT)
 
     def plan(state: RewooState) -> dict:
@@ -298,7 +301,9 @@ def make_rewoo_graph(analyst, seed: int, repair: bool = False):
     def repair_node(state: RewooState) -> dict:
         """Ask the planner for the steps that replace the failed ones; refused plans are asked once more."""
         question = next(m for m in state["messages"] if m.type == "human")
-        request = HumanMessage(content=repair_request(state["messages"], repair_role))
+        reason = repair_reason(state)
+        request = HumanMessage(content=repair_request(state["messages"],
+                                                      repair_no_data_role if reason == "no_data" else repair_role))
         messages = [system, question, request]
         round_number = sum(1 for m in state["messages"] if m.type == "ai" and node_of(m) == "repair") + 1
         result = planner.invoke(messages)
@@ -313,14 +318,22 @@ def make_rewoo_graph(analyst, seed: int, repair: bool = False):
             if problems:
                 rejections.append(problems)
         return {"messages": [plan_message(result["raw"], steps, rejections, discarded, why_in_args,
-                                          node="repair", round_number=round_number)]}
+                                          node="repair", round_number=round_number, reason=reason)]}
 
-    def after_execute(state: RewooState) -> str:
-        """Code decides: repair if a step of the last plan failed and the rounds are not used up."""
+    def repair_reason(state: RewooState) -> str:
+        """Why the plan is repaired now: "failed_steps", "no_data", or "" (no repair)."""
         rounds = sum(1 for m in state["messages"] if m.type == "ai" and node_of(m) == "repair")
         last_results = executed_plans(state["messages"])[-1][1]
         failed = any(step_error_text(m) is not None for m in last_results)
-        return "repair" if failed and rounds < max_repairs else "analyze"
+        if repair and failed and rounds < max_repairs:
+            return "failed_steps"
+        if rounds == 0 and not data_retrieved(state["messages"]):
+            return "no_data"
+        return ""
+
+    def after_execute(state: RewooState) -> str:
+        """Code decides: repair if the plan fails in a way repair_reason says, otherwise analyze."""
+        return "repair" if repair_reason(state) else "analyze"
 
     def execute(state: RewooState) -> dict:
         """Run the plan's steps (no model)."""
@@ -331,13 +344,17 @@ def make_rewoo_graph(analyst, seed: int, repair: bool = False):
 
         An empty reply is asked again (empty_retries); there is no handoff in this graph.
         """
-        model = with_calculate if count_calculations(state["messages"]) < max_calculations else analyst_model
+        calculating = count_calculations(state["messages"]) < max_calculations
+        model = with_calculate if calculating else analyst_model
+        retry_model = (quiet_with_calculate if calculating else quiet_model) if no_think else None
         request = HumanMessage(content=analyze_request)   # sent, not saved in the state
         reply, discarded = invoke_with_retries(model, [system] + state["messages"] + [request],
-                                               empty_retry_request, max_empty_retries, "analyze")
+                                               empty_retry_request, max_empty_retries, "analyze",
+                                               fallback_model=retry_model, notes_request=notes_request,
+                                               reasoning=analyst_reasoning)
         reply.response_metadata["node"] = "analyze"
         reply.response_metadata["discarded_calls"] = discarded
-        return {"messages": [reply]}
+        return {"messages": [with_no_data_header(reply, state["messages"])]}
 
     def after_analyze(state: RewooState) -> str:
         """Run the calculation if the analyst asked for one, otherwise stop."""
@@ -350,12 +367,9 @@ def make_rewoo_graph(analyst, seed: int, repair: bool = False):
     builder.add_node("calculate", ToolNode([tools[CALCULATE]]))
     builder.add_edge(START, "plan")
     builder.add_edge("plan", "execute")
-    if repair:
-        builder.add_node("repair", repair_node)
-        builder.add_conditional_edges("execute", after_execute, ["repair", "analyze"])
-        builder.add_edge("repair", "execute")
-    else:
-        builder.add_edge("execute", "analyze")
+    builder.add_node("repair", repair_node)
+    builder.add_conditional_edges("execute", after_execute, ["repair", "analyze"])
+    builder.add_edge("repair", "execute")
     builder.add_conditional_edges("analyze", after_analyze, ["calculate", END])
     builder.add_edge("calculate", "analyze")
     return builder.compile()

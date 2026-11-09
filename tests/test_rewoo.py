@@ -10,7 +10,7 @@ from langchain_core.tools import StructuredTool
 from pydantic import ValidationError
 
 from bench import blind
-from bench.run_bench import final_answer, model_record, repair_record, rewoo_record, with_reasoning
+from bench.run_bench import data_record, final_answer, model_record, repair_record, rewoo_record, with_reasoning
 from sim_analyst import graph as graph_module
 from sim_analyst import graphs, rewoo
 from sim_analyst.checker import check_numbers
@@ -20,7 +20,7 @@ from sim_analyst.tool_schemas import make_langchain_tools
 
 AMOUNT = "config.strategies[0].amount"
 GOOD_SUMMARY = {"tool": "summarize_results", "why": "means at the last step",
-                "args": {"value": "value", "group_by": AMOUNT, "time": "step", "at": [10],
+                "args": {"value": "value", "group_by": AMOUNT, "x": "step", "at": [10],
                          "filters": {"quantity": "x", "experiment": "exp_a"}}}
 BAD_COLUMN = {"tool": "summarize_results", "why": "wrong column",
               "args": {"value": "no_such_column"}}
@@ -38,7 +38,7 @@ def test_step_rejects_an_unknown_tool():
 
 def test_plan_has_between_1_and_8_steps():
     """0 and 9 steps are refused, 1 and 8 are fine."""
-    step = {"tool": "describe_trends", "args": {"value": "value", "time": "step"}, "why": "x"}
+    step = {"tool": "describe_trends", "args": {"value": "value", "x": "step"}, "why": "x"}
     for n in (0, 9):
         with pytest.raises(ValidationError):
             Plan.model_validate({"steps": [step] * n})
@@ -55,7 +55,7 @@ def test_step_args_are_checked_with_the_schema_of_the_tool():
     assert unknown and "colum" in unknown
     missing_b = step_error(Step(tool="compare_groups", args={"value": "value", "group_by": "g", "a": 1}, why="x"))
     assert missing_b and "b" in missing_b
-    wrong_type = step_error(Step(tool="describe_trends", args={"value": "v", "time": "t", "step": "abc"}, why="x"))
+    wrong_type = step_error(Step(tool="describe_trends", args={"value": "v", "x": "t", "step": "abc"}, why="x"))
     assert wrong_type and "step" in wrong_type
 
 
@@ -471,8 +471,8 @@ def test_unit_and_period_are_valid_plan_arguments():
     assert step_error(Step(tool="summarize_results", args={"value": "v", "unit": ["a", "b"]}, why="w")) is None
     assert step_error(Step(tool="compare_groups", args={"value": "v", "group_by": "g", "a": 1, "b": 2,
                                                          "unit": "a"}, why="w")) is None
-    assert step_error(Step(tool="describe_trends", args={"value": "v", "time": "d", "period": "week"}, why="w")) is None
-    assert step_error(Step(tool="describe_trends", args={"value": "v", "time": "d", "period": "year"}, why="w")) is not None
+    assert step_error(Step(tool="describe_trends", args={"value": "v", "x": "d", "period": "week"}, why="w")) is None
+    assert step_error(Step(tool="describe_trends", args={"value": "v", "x": "d", "period": "decade"}, why="w")) is not None
 
 
 # ---------------------------------------------------------------- rewoo_repair
@@ -484,7 +484,8 @@ EXP_A = {"quantity": "x", "experiment": "exp_a"}
 BAD_COLUMN_2 = {"tool": "summarize_results", "why": "wrong again", "args": {"value": "still_no_such_column"}}
 
 
-def build_repair(toolbox, monkeypatch, planner_replies, analyst_replies, rounds=1, graph_name="rewoo_repair"):
+def build_repair(toolbox, monkeypatch, planner_replies, analyst_replies, rounds=1, graph_name="rewoo_repair",
+                 extra_roles=None):
     """The graph on the fake database; the planner is used by plan AND repair. Returns (graph, planner, analyst)."""
     planner = FakeChat(structured=FakeStructured(planner_replies))
     analyst_model = FakeChat(replies=analyst_replies)
@@ -496,7 +497,7 @@ def build_repair(toolbox, monkeypatch, planner_replies, analyst_replies, rounds=
     analyst = SimpleNamespace(domain=SimpleNamespace(settings=settings), system_text="S", tools=tools,
                               roles={"plan": "plan it", "analyze": "write it", "empty_retry": "again",
                                      "repair": REPAIR_ROLE,
-                                     "repair_retry": REPAIR_RETRY_ROLE})
+                                     "repair_retry": REPAIR_RETRY_ROLE, **(extra_roles or {})})
     return graphs.GRAPHS[graph_name](analyst, 1), planner, analyst_model
 
 
@@ -567,7 +568,7 @@ def test_a_repair_that_fails_again_gets_no_second_round(toolbox, monkeypatch):
     assert len(planner.structured.seen) == 2 and nodes_of(messages) == ["plan", "repair", "analyze"]
     record = repair_record(messages)
     assert record == {"repair_rounds_done": 1, "steps_repaired": 1, "steps_failed_before_repair": 1,
-                      "steps_failed_after_repair": 1, "repair_rejections": 0}
+                      "steps_failed_after_repair": 1, "repair_rejections": 0, "no_data_repairs": 0}
 
 
 def test_two_rounds_are_possible_when_the_setting_allows(toolbox, monkeypatch):
@@ -603,7 +604,8 @@ def test_repair_measures_without_a_repair(toolbox, monkeypatch):
     """No failure: zero everywhere."""
     graph, _, _ = build_repair(toolbox, monkeypatch, [plan_reply([GOOD_SUMMARY])], [final_reply()])
     assert repair_record(ask(graph)) == {"repair_rounds_done": 0, "steps_repaired": 0, "steps_failed_before_repair": 0,
-                                         "steps_failed_after_repair": 0, "repair_rejections": 0}
+                                         "steps_failed_after_repair": 0, "repair_rejections": 0,
+                                         "no_data_repairs": 0}
 
 
 def test_repair_time_and_tokens_are_per_node(toolbox, monkeypatch):
@@ -636,3 +638,173 @@ def test_the_repair_role_text_has_no_domain_words():
     for word in ("run", "customer", "station", "rental", "shell", "toy", "simulation", "experiment", "amount"):
         assert word not in text.split() and f" {word} " not in f" {text} ", word
     assert "{" not in roles["repair"]
+
+
+# ---------------------------------------------------------------- g5.1-a: empty_retry_mode
+
+def build_no_think(toolbox, monkeypatch, on_replies, off_replies, mode="no_think"):
+    """The ReWOO graph with a reasoning analyst and a reasoning=False one; returns (graph, on, off, roles seen)."""
+    planner = FakeChat(structured=FakeStructured([plan_reply([GOOD_SUMMARY])]))
+    on, off, roles = FakeChat(replies=on_replies), FakeChat(replies=off_replies), []
+
+    def fake_make(provider, role, seed):
+        """Hand out the scripted model of the role and record the role request."""
+        roles.append(role)
+        return planner if role["name"] == "planner" else (on if role.get("reasoning") else off)
+
+    monkeypatch.setattr(rewoo, "make_chat_model", fake_make)
+    settings = {"provider": "x", "limits": {"empty_retries": 1, "empty_retry_mode": mode},
+                "roles": {"planner": {"name": "planner"}, "analyst": {"name": "analyst", "reasoning": True}}}
+    tools = [t for t in make_langchain_tools(toolbox) if t.name in graph_module.GRAPH_TOOLS]
+    analyst = SimpleNamespace(domain=SimpleNamespace(settings=settings), system_text="S", tools=tools,
+                              roles={"plan": "plan it", "analyze": "write it", "empty_retry": "again"})
+    return make_rewoo_graph(analyst, seed=1), on, off, roles
+
+
+def empty_analyst(reasoning="notes ABC", **kw):
+    """An empty analyst reply with reasoning text (None: no reasoning_content)."""
+    extra = {} if reasoning is None else {"reasoning_content": reasoning}
+    return AIMessage(content="", additional_kwargs=extra, response_metadata={**meta(300, 200, 3.0, 30.0), **kw})
+
+
+def test_rewoo_no_think_retry(toolbox, monkeypatch):
+    """The retry goes to a reasoning=False analyst with the old notes; its answer is marked."""
+    graph, on, off, roles = build_no_think(toolbox, monkeypatch, [empty_analyst(done_reason="length")],
+                                           [final_reply("second 7")])
+    messages = ask(graph)
+    assert [r.get("reasoning") for r in roles if r["name"] == "analyst"] == [True, False]
+    assert "notes ABC" in off.seen[0][-1].content and len(on.seen) == 1
+    assert off.tools_at_call == [["calculate"]]        # bound like the original model
+    final = messages[-1]
+    assert final.content == "second 7" and final.response_metadata["empty_retry_mode"] == "no_think"
+    record = model_record(messages)
+    assert record["answer_from_no_think_retry"] is True and record["length_stops"] == 1
+
+
+def test_rewoo_no_think_missing_reasoning(toolbox, monkeypatch):
+    """No reasoning_content in the empty reply: the retry says "(no notes written)"."""
+    graph, _, off, _ = build_no_think(toolbox, monkeypatch, [empty_analyst(None)], [final_reply()])
+    ask(graph)
+    assert "(no notes written)" in off.seen[0][-1].content
+
+
+def test_rewoo_same_mode_keeps_the_old_retry(toolbox, monkeypatch):
+    """mode "same": the same model is asked again with the old request."""
+    graph, on, off, roles = build_no_think(toolbox, monkeypatch, [empty_analyst(), final_reply()], [], mode="same")
+    messages = ask(graph)
+    assert on.seen[1][-1].content == "again" and not off.seen
+    assert "empty_retry_mode" not in messages[-1].response_metadata
+    assert len([r for r in roles if r["name"] == "analyst"]) == 1
+
+
+def test_rewoo_unknown_mode_is_an_error(toolbox, monkeypatch):
+    """A wrong value raises ValueError when the graph is built."""
+    with pytest.raises(ValueError, match="empty_retry_mode"):
+        build_no_think(toolbox, monkeypatch, [], [], mode="later")
+
+
+# ---------------------------------------------------------------- g5.1-f: no step read the data
+
+CHECK_OK = {"tool": "check_quality", "why": "structure of the table", "args": {"table": "runs"}}
+BAD_DESCRIBE = {"tool": "describe_trends", "why": "the trend", "args": {"value": "no_such_column", "x": "step"}}
+NO_DATA_TEXT = ("No step of your plan read the data: every call to summarize_results, describe_trends, compare_groups "
+                "or query_results failed, or there was none. Read each error: it says what to change. Write the steps "
+                "that read the data the question needs, with corrected arguments; do not repeat the steps that worked.")
+
+
+def repairs_of(messages):
+    """The repair messages of a conversation."""
+    return [m for m in messages if m.type == "ai" and nodes_of([m]) == ["repair"]]
+
+
+def test_the_no_data_text_is_the_agreed_one_and_step_error_text_moved_to_graph():
+    """The default request is in the code; rewoo uses the function that now lives in graph.py."""
+    assert rewoo.REPAIR_NO_DATA_DEFAULT.split() == NO_DATA_TEXT.split()
+    assert rewoo.step_error_text is graph_module.step_error_text
+
+
+def test_no_data_means_one_repair_even_without_the_repair_setting(toolbox, monkeypatch):
+    """A reading step failed and only check_quality worked: one repair round with reason no_data and the agreed text."""
+    graph, planner, _ = build_repair(toolbox, monkeypatch,
+                                     [plan_reply([BAD_DESCRIBE, CHECK_OK]), plan_reply([GOOD_QUERY])],
+                                     [final_reply()], graph_name="rewoo")
+    messages = ask(graph)
+    assert nodes_of(messages) == ["plan", "repair", "analyze"]
+    assert repairs_of(messages)[0].response_metadata["repair_reason"] == "no_data"
+    request = str(planner.structured.seen[1][-1].content)
+    assert request.startswith(NO_DATA_TEXT) and "unknown column 'no_such_column'" in request
+    assert REPAIR_ROLE not in request
+    assert messages[-1].content == "final 100"                      # the repair read the data: no header
+    assert repair_record(messages)["no_data_repairs"] == 1
+
+
+def test_a_plan_with_no_reading_step_at_all_is_repaired_once_in_both_graphs(toolbox, monkeypatch):
+    """check_quality alone describes the structure: it is not a reading step."""
+    for name in ("rewoo", "rewoo_repair"):
+        graph, planner, _ = build_repair(toolbox, monkeypatch, [plan_reply([CHECK_OK]), plan_reply([GOOD_QUERY])],
+                                         [final_reply()], graph_name=name)
+        messages = ask(graph)
+        assert nodes_of(messages) == ["plan", "repair", "analyze"] and len(planner.structured.seen) == 2
+
+
+def test_a_no_data_repair_that_fails_gives_the_header_and_no_second_round(toolbox, monkeypatch):
+    """Even with repair_rounds = 2 the no_data repair is one round; the answer starts with the header."""
+    graph, planner, _ = build_repair(toolbox, monkeypatch,
+                                     [plan_reply([BAD_DESCRIBE]), plan_reply([BAD_COLUMN_2])],
+                                     [final_reply("S = 400 [tool].")], rounds=2, graph_name="rewoo")
+    messages = ask(graph)
+    assert nodes_of(messages) == ["plan", "repair", "analyze"] and len(planner.structured.seen) == 2
+    answer = final_answer(messages)
+    assert answer == graph_module.NO_DATA_HEADER + "S = 400 [tool]."
+    assert answer.startswith("**Data not retrieved.** Every step that reads the data failed")
+    record = data_record(messages, answer)
+    assert record == {"data_retrieved": False, "tool_marks_without_data": 1}
+
+
+def test_no_data_header_is_not_added_when_the_analyst_asks_for_a_calculation(toolbox, monkeypatch):
+    """Only the final answer gets the header, not a reply that calls the calculator."""
+    graph, _, _ = build_repair(toolbox, monkeypatch, [plan_reply([BAD_DESCRIBE]), plan_reply([BAD_COLUMN_2])],
+                               [calc_call("1+1", "c1"), final_reply("two")], graph_name="rewoo")
+    messages = ask(graph)
+    analysts = [m for m in messages if m.type == "ai" and nodes_of([m]) == ["analyze"]]
+    assert analysts[0].tool_calls and analysts[0].content == ""
+    assert analysts[-1].content == graph_module.NO_DATA_HEADER + "two"
+
+
+def test_check_quality_alone_is_repaired_but_gets_no_header(toolbox, monkeypatch):
+    """3/11: a plan with only check_quality is still repaired once (it reads no measure), but if the repair fails
+    the answer has no header: the missing-value counts of check_quality are data (weather 3a got a false header)."""
+    graph, planner, _ = build_repair(toolbox, monkeypatch, [plan_reply([CHECK_OK]), plan_reply([BAD_COLUMN_2])],
+                                     [final_reply("two")], graph_name="rewoo")
+    messages = ask(graph)
+    assert nodes_of(messages) == ["plan", "repair", "analyze"] and len(planner.structured.seen) == 2
+    assert final_answer(messages) == "two"
+    assert data_record(messages, "two") == {"data_retrieved": True, "tool_marks_without_data": 0}
+
+
+def test_a_good_reading_step_next_to_a_failed_one_does_not_trigger_the_no_data_repair(toolbox, monkeypatch):
+    """repair=False: the failure stays, nothing is repaired, no header."""
+    graph, planner, _ = build_repair(toolbox, monkeypatch, [plan_reply([GOOD_SUMMARY, BAD_COLUMN])], [final_reply()],
+                                     graph_name="rewoo")
+    messages = ask(graph)
+    assert nodes_of(messages) == ["plan", "analyze"] and len(planner.structured.seen) == 1
+    assert messages[-1].content == "final 100"
+    assert data_record(messages, "x [tool]") == {"data_retrieved": True, "tool_marks_without_data": 0}
+
+
+def test_failed_steps_keep_their_reason_with_repair_on(toolbox, monkeypatch):
+    """A failed step is repaired with reason failed_steps and the failed-steps text, not the no-data one."""
+    graph, planner, _ = build_repair(toolbox, monkeypatch, [plan_reply([GOOD_SUMMARY, BAD_COLUMN]),
+                                                            plan_reply([GOOD_QUERY])], [final_reply()])
+    messages = ask(graph)
+    assert repairs_of(messages)[0].response_metadata["repair_reason"] == "failed_steps"
+    assert str(planner.structured.seen[1][-1].content).startswith(REPAIR_ROLE)
+    assert repair_record(messages)["no_data_repairs"] == 0
+
+
+def test_the_no_data_request_can_come_from_the_roles(toolbox, monkeypatch):
+    """roles["repair_no_data"] replaces the default text."""
+    graph, planner, _ = build_repair(toolbox, monkeypatch, [plan_reply([CHECK_OK]), plan_reply([GOOD_QUERY])],
+                                     [final_reply()], extra_roles={"repair_no_data": "READ THE DATA."})
+    ask(graph)
+    assert str(planner.structured.seen[1][-1].content).startswith("READ THE DATA.")

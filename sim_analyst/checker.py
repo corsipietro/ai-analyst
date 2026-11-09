@@ -1,4 +1,4 @@
-"""Number checker: a MEASURING tool, not a corrector.
+"""Number checker: a MEASURING tool, not a corrector (ported unchanged in logic from analyst/number_check.py).
 
 It reads the analyst's final answer, extracts every number written in it and checks
 whether each one can be traced back to the sources the analyst had (tool results,
@@ -8,7 +8,9 @@ the user's question, the reference given in the instructions):
 - derived: the number is the sum or the difference of two source values
            (2257.31 = 2827.189 - 569.884), with a slightly larger rounding tolerance;
 - untraceable: anything else (ratios, products, means computed by hand, invented numbers).
-The answer is never sent back to the model: the checker only measures.
+The answer is never sent back to the model: the checker only measures. It also counts the [tool] marks an
+answer carries when no step read the data (tool_marks_without_data): claims marked as coming from a tool that
+returned nothing.
 
 Known limits: small integers (years, counts) are almost always traceable, because many
 differences of two source values are small integers; products and ratios (e.g. a value
@@ -76,6 +78,14 @@ def close_to_any(x: float, sorted_values: list[float], tolerance: float) -> bool
     """True if some value in the sorted list is within tolerance of x (binary search)."""
     i = bisect_left(sorted_values, x - tolerance)
     return i < len(sorted_values) and sorted_values[i] <= x + tolerance
+
+
+def tool_marks_without_data(answer: str, retrieved: bool) -> int:
+    """How many [tool] marks the answer has if no reading step gave data (retrieved False), else 0.
+
+    A measure, not a correction: the answer is left as it is.
+    """
+    return 0 if retrieved else answer.count("[tool]")
 
 
 def check_numbers(answer: str, sources: list[str]) -> dict:

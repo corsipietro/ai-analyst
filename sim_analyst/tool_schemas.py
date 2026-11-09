@@ -9,7 +9,7 @@ from __future__ import annotations
 from typing import Any, Literal, Union
 
 from langchain_core.tools import StructuredTool
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from .tools import Toolbox
 
@@ -20,7 +20,9 @@ COLUMN_HELP = ("a column name, table.column, or a value inside a JSON column wri
 UNIT_HELP = ("column(s) identifying the entity that has several rows (the unit): the values of each unit are "
              "averaged first and the statistics are over the units. Use it when one unit has several rows in "
              "a group")
-PERIOD_HELP = "day, week or month: the size of the time bucket for a date or timestamp column"
+PERIOD_HELP = ("hour, day, week, month or year: the size of the bucket when x is a date or timestamp column "
+               "(hour only for a timestamp)")
+X_HELP = "the column along which the data are ordered or the trend is followed (a time, a step, a parameter...)"
 FILTERS_HELP = ('keep only the rows where each column matches, e.g. {"<text column>": "<one value>", '
                 '"<column.path>": [<v1>, <v2>], "<number or date column>": {"between": [<a>, <b>]}, '
                 '"<number or date column>": {">=": <x>} (also >, <, <=; dates as YYYY-MM-DD), '
@@ -43,9 +45,9 @@ class SummarizeArgs(BaseModel):
     value: str = Field(description=f"the numeric column to summarize: {COLUMN_HELP}.")
     group_by: Union[str, list[str], None] = Field(
         default=None, description="column(s) defining the groups: every column whose values you want kept apart.")
-    time: Union[str, None] = Field(default=None, description="the column holding the time, if any.")
+    x: Union[str, None] = Field(default=None, description=X_HELP + ", if any.")
     at: Union[Scalar, list[Scalar], None] = Field(
-        default=None, description="the time value(s) to summarize at (at most 20); default: the last time.")
+        default=None, description="the value(s) of x to summarize at (at most 20); default: the last value of x.")
     filters: Union[dict[str, Any], None] = Field(default=None, description=FILTERS_HELP + ".")
     table: Union[str, None] = Field(default=None, description="only if the value column name is in several tables.")
     unit: Union[str, list[str], None] = Field(default=None, description=UNIT_HELP + ".")
@@ -55,17 +57,17 @@ class TrendsArgs(BaseModel):
     """Arguments of describe_trends."""
 
     value: str = Field(description=f"the numeric column whose evolution you want: {COLUMN_HELP}.")
-    time: str = Field(description="the column holding the time.")
+    x: str = Field(description=X_HELP + ": numeric, DATE or TIMESTAMP.")
     group_by: Union[str, list[str], None] = Field(
         default=None, description="column(s) defining the groups: every column whose values you want kept apart.")
     filters: Union[dict[str, Any], None] = Field(default=None, description=FILTERS_HELP + ".")
     step: Union[float, None] = Field(
-        default=None, description="numeric time only: time step of the sampled series (default: about 12 points).")
-    period: Union[Literal["day", "week", "month"], None] = Field(
+        default=None, description="numeric x only: step of the sampled series (default: about 12 points).")
+    period: Union[Literal["hour", "day", "week", "month", "year"], None] = Field(
         default=None, description=PERIOD_HELP + " (default: the finest that keeps the series short).")
     start: Union[float, str, None] = Field(
-        default=None, description="first time to include (a date like 2026-01-31 for a date column; default: the first).")
-    end: Union[float, str, None] = Field(default=None, description="last time to include (default: the last).")
+        default=None, description="first value of x to include (a date like 2026-01-31 for a date column; default: the first).")
+    end: Union[float, str, None] = Field(default=None, description="last value of x to include (default: the last).")
     table: Union[str, None] = Field(default=None, description="only if the value column name is in several tables.")
 
 
@@ -76,8 +78,8 @@ class CompareArgs(BaseModel):
     group_by: str = Field(description="ONE column whose two values you compare.")
     a: Scalar = Field(description="first value of group_by.")
     b: Scalar = Field(description="second value of group_by; the difference is mean(b) - mean(a).")
-    time: Union[str, None] = Field(default=None, description="the column holding the time, if any.")
-    at: Union[Scalar, None] = Field(default=None, description="the time to compare at (default: the last time).")
+    x: Union[str, None] = Field(default=None, description=X_HELP + ", if any.")
+    at: Union[Scalar, None] = Field(default=None, description="the value of x to compare at (default: the last value of x).")
     filters: Union[dict[str, Any], None] = Field(
         default=None, description=FILTERS_HELP + "; use it to fix every other column that varies.")
     table: Union[str, None] = Field(default=None, description="only if the value column name is in several tables.")
@@ -85,14 +87,17 @@ class CompareArgs(BaseModel):
 
 
 class CheckQualityArgs(BaseModel):
-    """Arguments of check_quality."""
+    """Arguments of check_quality (an unknown argument name is refused)."""
+
+    model_config = ConfigDict(extra="forbid")
 
     table: str = Field(description="the table to check.")
     group_by: Union[str, list[str], None] = Field(
         default=None, description="column(s) of that table: NULL share per group, runs of NULLs per group.")
-    time: Union[str, None] = Field(
-        default=None, description="the time column of that table: NULLs per period and runs of NULLs.")
-    period: Union[Literal["day", "week", "month"], None] = Field(
+    x: Union[str, None] = Field(
+        default=None, description="the column of that table along which the data are ordered (numeric, DATE or "
+                                  "TIMESTAMP): NULLs per value or period of x and runs of NULLs.")
+    period: Union[Literal["hour", "day", "week", "month", "year"], None] = Field(
         default=None, description=PERIOD_HELP + " (default: day).")
     filters: Union[dict[str, Any], None] = Field(default=None, description=FILTERS_HELP + ".")
 
@@ -116,18 +121,20 @@ DESCRIPTIONS = {
         "Prefer summarize_results, describe_trends and compare_groups for means, trends and differences."),
     "summarize_results": (
         "Count (n), mean, std, min, max, n_rows (rows including NULL values), n_null and sum of one numeric column, "
-        "per group and at the requested times. Statistics are computed over all rows that share the same group_by "
-        "values and time. They describe a sample only if those rows are comparable observations of one condition: "
+        "per group and at the requested values of x. Statistics are computed over all rows that share the same group_by "
+        "values and value of x. They describe a sample only if those rows are comparable observations of one condition: "
         "fix every other varying column with filters or group_by. If one unit (the entity that has several rows) has several "
         "rows in a group, pass unit: its values are averaged first and the statistics are over the units. "
         "Use this for means and spreads: never compute them yourself. "
         "If rows of different categories would be put together, it returns an error instead: fix filters or group_by."),
     "describe_trends": (
-        "How a numeric column evolves in time, per group: initial and final value, maximum and minimum of the "
-        "mean with their times, slope over the last part of the time range, shape and turning points, and the "
-        "series sampled every 'step' with the mean, min and max over the observations. Use it for questions about time. "
-        "The time column may be a number (use step) or a date/timestamp (use period: day, week or month; times are "
-        "returned as dates and the slope is per day)."),
+        "How a numeric column changes along another column x, per group: initial and final value, maximum and "
+        "minimum of the mean with the x where they occur, slope over the last part of the range of x, shape and "
+        "turning points, and the series sampled every 'step' with the mean (min and max at the last value of x). "
+        "Use it for questions about change: in time, along a sequence, or as a parameter varies. "
+        "x may be a number (use step; with few values of x all are kept) or a date/timestamp (use period: hour "
+        "for a timestamp, day, week, month or year; values of x are returned as dates, and the slope is per day, "
+        "or per hour for period hour)."),
     "compare_groups": (
         "Compare two values (a, b) of one column: difference of the means (b minus a) with Welch's t interval "
         "over the observations, its degrees of freedom, n, mean, min and max of each group, whether the min-max "
@@ -139,8 +146,8 @@ DESCRIPTIONS = {
         "verdict 'none'."),
     "check_quality": (
         "Data-quality report on ONE table: rows, NULL count and share per column, NULL share per group (group_by), "
-        "NULLs per period and stretches of at least 3 consecutive periods all NULL (time, period), exact duplicate rows, "
-        "repeated values in identifier columns, text values that differ only by case or spaces, text columns that "
+        "NULLs per period and stretches of at least 3 consecutive periods all NULL (x, period), exact duplicate rows, "
+        "repeated values in columns that are unique in almost every row (an identifier with some repeats), text values that differ only by case or spaces, text columns that "
         "hold numbers (also with a decimal comma), and values of a column that are missing in the table it links to. "
         "It only reports facts: what a NULL or a duplicate means is for you to decide. Use it before relying on a "
         "column, or when a question is about missing, duplicated or dirty data."),

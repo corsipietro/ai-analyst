@@ -2,16 +2,40 @@
 import pytest
 from scipy import stats as scipy_stats
 
-from sim_analyst.stats import (bootstrap_difference, clean, nice_step, sample_points, shape_of,
+from sim_analyst.stats import (KEY_DIGITS, bootstrap_difference, clean, clean_row, nice_step, sample_points, shape_of,
                                round_significant, trend_summary, turning_points, welch_interval)
 
 
 def test_clean_rounds_and_turns_whole_floats_into_int():
-    """40.0 -> 40, 1.23456 -> 1.235, NaN -> None, text unchanged."""
+    """40.0 -> 40, 1.23456 -> 1.23, NaN -> None, text unchanged."""
     assert clean(40.0) == 40 and isinstance(clean(40.0), int)
-    assert clean(1.23456) == 1.235
+    assert clean(1.23456) == 1.23
     assert clean(float("nan")) is None
     assert clean("a") == "a"
+
+
+def test_clean_keeps_three_significant_digits_and_never_cuts_the_integer_part():
+    """Small values keep their magnitude, large ones their integer part."""
+    assert clean(1e-06) == 1e-06
+    assert clean(1.23456) == 1.23
+    assert clean(977.969) == 978 and isinstance(clean(977.969), int)
+    assert clean(48317.7) == 48318 and isinstance(clean(48317.7), int)
+    assert clean(-0.0012345) == -0.00123
+    assert clean(40.0) == 40 and isinstance(clean(40.0), int)
+    assert clean(0.0) == 0
+    assert clean(float("nan")) is None
+
+
+def test_clean_with_key_digits_removes_only_float_noise():
+    """Data values (keys) keep up to 12 significant digits."""
+    assert KEY_DIGITS == 12
+    assert clean(400.00000000000006, KEY_DIGITS) == 400
+    assert clean(12.3456, KEY_DIGITS) == 12.3456
+
+
+def test_clean_row_uses_key_digits_for_the_first_n_keys():
+    """The first n_keys entries are keys, the others are measures."""
+    assert clean_row([12.3456, 977.969], n_keys=1) == [12.3456, 978]
 
 
 def test_nice_step_is_round():
@@ -25,8 +49,8 @@ def test_turning_points_and_shape():
     """A series that rises, falls and rises again has a peak and a trough; a flat top counts at its first time."""
     times = [0, 1, 2, 3, 4, 5]
     means = [0, 2, 2, 1, 3, 4]
-    assert turning_points(times, means) == [{"kind": "peak", "time": 1, "mean": 2},
-                                            {"kind": "trough", "time": 3, "mean": 1}]
+    assert turning_points(times, means) == [{"kind": "peak", "x": 1, "mean": 2},
+                                            {"kind": "trough", "x": 3, "mean": 1}]
     assert shape_of(means) == "not monotonic"
     assert shape_of([1, 1, 2]) == "increasing"
     assert shape_of([3, 3, 3]) == "constant"
@@ -42,9 +66,9 @@ def test_trend_summary_of_a_peak():
     """A rise then a fall: maximum and its time, decreasing last part, one peak."""
     points = [(t, 3, float(m), float(m) - 1, float(m) + 1) for t, m in enumerate([0, 5, 10, 8, 6, 4])]
     s = trend_summary(points, step=1)
-    assert s["max_of_mean"] == {"time": 2, "mean": 10.0}
-    assert s["slope_last_part"]["slope_per_time_unit"] < 0
-    assert s["turning_points_sampled"] == [{"kind": "peak", "time": 2, "mean": 10.0}]
+    assert s["max_of_mean"] == {"x": 2, "mean": 10.0}
+    assert s["slope_last_part"]["slope_per_unit_of_x"] < 0
+    assert s["turning_points_sampled"] == [{"kind": "peak", "x": 2, "mean": 10.0}]
     assert s["final"]["spread"] == 2.0
 
 

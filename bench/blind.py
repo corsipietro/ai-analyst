@@ -1,6 +1,6 @@
 """Blind grading: copy transcripts under anonymous codes, grade them, then join the grades to their origin.
 
-Usage (from the repository root):
+Usage (from the sim_analyst/ folder):
     python -m bench.blind make --domain toy_shell --runs bench/runs/<folder1> [<folder2> ...] --name <name> [--seed N]
     python -m bench.blind unblind --name <name>
 

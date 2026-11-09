@@ -28,12 +28,12 @@ def toy():
 
 def test_same_means_as_v1(toy):
     """Debris at year 60 for 40, 60 and 120 launches: same mean, min and max as the v1 tool."""
-    r = toy.summarize_results(value="value", group_by=LAUNCHES, time="year", at=[60], filters={"metric": "debris"})
+    r = toy.summarize_results(value="value", group_by=LAUNCHES, x="year", at=[60], filters={"metric": "debris"})
     rows = {row[0]: dict(zip(r["columns"], row)) for row in r["rows"]}
     assert len(rows) == 7 and "warning" not in r
-    assert {k: rows[40][k] for k in ("n", "mean", "min", "max")} == {"n": 3, "mean": 569.884, "min": 419.517, "max": 722.455}
-    assert (rows[60]["min"], rows[60]["max"], rows[60]["mean"]) == (616.612, 1993.459, 1211.517)
-    assert rows[120]["mean"] == 2827.189
+    assert {k: rows[40][k] for k in ("n", "mean", "min", "max")} == {"n": 3, "mean": 570, "min": 420, "max": 722}
+    assert (rows[60]["min"], rows[60]["max"], rows[60]["mean"]) == (617, 1993, 1212)
+    assert rows[120]["mean"] == 2827
     # the counts added in g5: 3 runs, no NULL, and the sum of the values is 3 times their mean
     assert (rows[40]["n_rows"], rows[40]["n_null"]) == (3, 0)
     assert rows[40]["sum"] == pytest.approx(3 * rows[40]["mean"], abs=0.01)
@@ -41,7 +41,7 @@ def test_same_means_as_v1(toy):
 
 def test_forgetting_the_metric_is_refused(toy):
     """Averaging satellites and debris together (a 'false computation' of 29/10) gives an error, no numbers."""
-    r = toy.summarize_results(value="value", group_by=LAUNCHES, time="year", at=[60])
+    r = toy.summarize_results(value="value", group_by=LAUNCHES, x="year", at=[60])
     assert r["error_type"] == "column" and "series.metric" in r["error"]
 
 

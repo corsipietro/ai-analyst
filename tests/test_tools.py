@@ -69,7 +69,7 @@ def test_tools_leave_the_database_unchanged(db_path, toolbox):
 
 def test_summarize_known_means(toolbox):
     """Mean, min, max and n per group at the requested time, with a JSON path from another table."""
-    r = toolbox.summarize_results(value="value", group_by=AMOUNT, time="step", at=[10], filters=EXP_A)
+    r = toolbox.summarize_results(value="value", group_by=AMOUNT, x="step", at=[10], filters=EXP_A)
     assert r["columns"] == [AMOUNT, "step", "n", "mean", "std", "min", "max", "n_rows", "n_null", "sum"]
     assert r["rows"] == [[10, 10, 3, 100, 1, 99, 101, 3, 0, 300], [20, 10, 3, 200, 1, 199, 201, 3, 0, 600]]
     assert "warning" not in r
@@ -77,14 +77,14 @@ def test_summarize_known_means(toolbox):
 
 def test_summarize_defaults_to_last_time(toolbox):
     """Without 'at', the last time is used and a note says so."""
-    r = toolbox.summarize_results(value="value", group_by=AMOUNT, time="step", filters=EXP_A)
+    r = toolbox.summarize_results(value="value", group_by=AMOUNT, x="step", filters=EXP_A)
     assert [row[1] for row in r["rows"]] == [10, 10]
-    assert "last time" in r["notes"][0]
+    assert "last value of x" in r["notes"][0]
 
 
 def test_summarize_refuses_mixing_quantities(toolbox):
     """Without filtering the quantity, x and y would be averaged together: error, no numbers."""
-    r = toolbox.summarize_results(value="value", group_by=AMOUNT, time="step", at=[10],
+    r = toolbox.summarize_results(value="value", group_by=AMOUNT, x="step", at=[10],
                                   filters={"experiment": "exp_a"})
     assert r["error_type"] == "column" and "rows" not in r
     assert "series.quantity (values ['x', 'y'])" in r["error"]
@@ -92,30 +92,30 @@ def test_summarize_refuses_mixing_quantities(toolbox):
 
 def test_summarize_refuses_mixing_parameters(toolbox):
     """Grouping by amount only, runs of exp_b (another rate) fall in the group amount = 10: error."""
-    r = toolbox.summarize_results(value="value", group_by=AMOUNT, time="step", at=[10], filters={"quantity": "x"})
+    r = toolbox.summarize_results(value="value", group_by=AMOUNT, x="step", at=[10], filters={"quantity": "x"})
     assert r["error_type"] == "column" and "runs.config (JSON" in r["error"]
 
 
 def test_trends_and_compare_refuse_mixing(toolbox):
     """The same refusal in describe_trends and compare_groups."""
-    r = toolbox.describe_trends(value="value", time="step", group_by=AMOUNT, filters={"experiment": "exp_a"})
+    r = toolbox.describe_trends(value="value", x="step", group_by=AMOUNT, filters={"experiment": "exp_a"})
     assert r["error_type"] == "column" and "series.quantity" in r["error"]
-    r = toolbox.compare_groups(value="value", group_by=AMOUNT, a=10, b=20, time="step", at=10,
+    r = toolbox.compare_groups(value="value", group_by=AMOUNT, a=10, b=20, x="step", at=10,
                                filters={"experiment": "exp_a"})
     assert r["error_type"] == "column" and "series.quantity" in r["error"]
 
 
 def test_unknown_column_and_wrong_json_path_are_column_errors(toolbox):
     """Wrong names give a 'column' error that lists what exists."""
-    r = toolbox.summarize_results(value="valu", time="step")
+    r = toolbox.summarize_results(value="valu", x="step")
     assert r["error_type"] == "column" and "series: run_id, step, quantity, value" in r["error"]
-    r = toolbox.summarize_results(value="value", group_by="config.strategies[0].amnt", time="step", filters=EXP_A)
+    r = toolbox.summarize_results(value="value", group_by="config.strategies[0].amnt", x="step", filters=EXP_A)
     assert r["error_type"] == "column" and AMOUNT in r["error"]
 
 
 def test_filter_on_missing_value_lists_existing_values(toolbox):
     """A filter that selects nothing gives a 'value' error with the values that exist."""
-    r = toolbox.summarize_results(value="value", time="step", filters={"quantity": "z"})
+    r = toolbox.summarize_results(value="value", x="step", filters={"quantity": "z"})
     assert r["error_type"] == "value" and "['x', 'y']" in r["error"]
 
 
@@ -123,13 +123,13 @@ def test_filter_on_missing_value_lists_existing_values(toolbox):
 
 def test_trends_of_a_linear_series(toolbox):
     """x = amount * step: initial 0, final 10 * amount, slope = amount, increasing, no turning point."""
-    r = toolbox.describe_trends(value="value", time="step", group_by=AMOUNT, filters=EXP_A)
-    assert r["step"] == 1 and "warning" not in r
+    r = toolbox.describe_trends(value="value", x="step", group_by=AMOUNT, filters=EXP_A)
+    assert r["step"] is None and "warning" not in r      # 11 values of x: all kept, no step
     first = r["groups"][0]
-    assert first["group"] == {AMOUNT: 10}
-    assert first["initial"] == {"time": 0, "mean": 0}
-    assert first["final"] == {"time": 10, "mean": 100, "min": 99, "max": 101, "spread": 2}
-    assert first["slope_last_part"]["slope_per_time_unit"] == pytest.approx(10)
+    assert first["group"] == {"series.quantity": "x", "runs.experiment": "exp_a", AMOUNT: 10}
+    assert first["initial"] == {"x": 0, "mean": 0}
+    assert first["final"] == {"x": 10, "mean": 100, "min": 99, "max": 101, "spread": 2}
+    assert first["slope_last_part"]["slope_per_unit_of_x"] == pytest.approx(10)
     assert first["shape_sampled"] == "increasing" and first["turning_points_sampled"] == []
     assert first["observations"] == [3]
     assert len(first["series_sampled"]["rows"]) == 11
@@ -137,7 +137,7 @@ def test_trends_of_a_linear_series(toolbox):
 
 def test_trends_step_and_range(toolbox):
     """step and start/end select the sampled points; the last point is always kept."""
-    r = toolbox.describe_trends(value="value", time="step", group_by=AMOUNT, filters=EXP_A, step=4, start=0, end=10)
+    r = toolbox.describe_trends(value="value", x="step", group_by=AMOUNT, filters=EXP_A, step=4, start=0, end=10)
     times = [row[0] for row in r["groups"][0]["series_sampled"]["rows"]]
     assert times == [0, 4, 8, 10]
 
@@ -146,7 +146,7 @@ def test_trends_step_and_range(toolbox):
 
 def test_compare_clear_difference(toolbox):
     """x at step 10: 200 - 100 = 100, ranges far apart: established."""
-    r = toolbox.compare_groups(value="value", group_by=AMOUNT, a=10, b=20, time="step", at=10, filters=EXP_A)
+    r = toolbox.compare_groups(value="value", group_by=AMOUNT, a=10, b=20, x="step", at=10, filters=EXP_A)
     assert r["difference_b_minus_a"] == 100
     assert r["verdict"] == "established" and r["ranges_overlap"] is False
     assert r["a"]["n"] == 3 and "notes" not in r
@@ -154,7 +154,7 @@ def test_compare_clear_difference(toolbox):
 
 def test_compare_noise_is_not_established(toolbox):
     """y: groups differ by 1, repetitions by 100: not established, ranges overlap."""
-    r = toolbox.compare_groups(value="value", group_by=AMOUNT, a=10, b=20, time="step", at=10,
+    r = toolbox.compare_groups(value="value", group_by=AMOUNT, a=10, b=20, x="step", at=10,
                                filters={"quantity": "y", "experiment": "exp_a"})
     assert r["difference_b_minus_a"] == 1
     assert r["verdict"] == "not established" and r["ranges_overlap"] is True
@@ -162,7 +162,7 @@ def test_compare_noise_is_not_established(toolbox):
 
 def test_compare_uses_welch_and_no_bootstrap_with_few_replicates(toolbox):
     """3 replicates per group: the verdict comes from Welch's interval; no bootstrap is reported."""
-    r = toolbox.compare_groups(value="value", group_by=AMOUNT, a=10, b=20, time="step", at=10, filters=EXP_A)
+    r = toolbox.compare_groups(value="value", group_by=AMOUNT, a=10, b=20, x="step", at=10, filters=EXP_A)
     assert r["method"] == "welch"
     assert r["degrees_of_freedom"] == pytest.approx(4)
     assert "bootstrap_interval" not in r
@@ -172,7 +172,7 @@ def test_compare_uses_welch_and_no_bootstrap_with_few_replicates(toolbox):
 
 def test_compare_with_one_value_in_a_group_has_no_verdict(toolbox):
     """exp_b has a single run per (rate) value here: one value in a group -> no verdict, with the reason."""
-    r = toolbox.compare_groups(value="value", group_by="runs.run_id", a=1, b=2, time="step", at=10,
+    r = toolbox.compare_groups(value="value", group_by="runs.run_id", a=1, b=2, x="step", at=10,
                                filters={"quantity": "x"})
     assert "verdict" in r and r["verdict"].startswith("cannot be assessed")
     assert "observations" in r["verdict"] and "replicate" not in r["verdict"]
@@ -224,7 +224,7 @@ def test_compare_still_refuses_a_varying_category(toolbox):
 
 def test_compare_accepts_a_fixed_time(toolbox):
     """With time and at (and quantity fixed) each run has one row: accepted."""
-    r = toolbox.compare_groups(value="value", group_by=AMOUNT, a=10, b=20, time="step", at=10, filters=EXP_A)
+    r = toolbox.compare_groups(value="value", group_by=AMOUNT, a=10, b=20, x="step", at=10, filters=EXP_A)
     assert "error" not in r and r["a"]["n"] == 3
 
 
@@ -245,13 +245,13 @@ def test_summarize_on_pooled_times_gives_a_note(toolbox):
 
 def test_summarize_accepts_time_with_at(toolbox):
     """time + at: one row per run in each group."""
-    r = toolbox.summarize_results(value="value", group_by=AMOUNT, time="step", at=[5, 10], filters=EXP_A)
+    r = toolbox.summarize_results(value="value", group_by=AMOUNT, x="step", at=[5, 10], filters=EXP_A)
     assert "error" not in r and r["rows"][0][2] == 3
 
 
 def test_summarize_accepts_time_without_at(toolbox):
     """time without at summarizes the last time: accepted."""
-    r = toolbox.summarize_results(value="value", group_by=AMOUNT, time="step", filters=EXP_A)
+    r = toolbox.summarize_results(value="value", group_by=AMOUNT, x="step", filters=EXP_A)
     assert "error" not in r and r["rows"][0][2] == 3
 
 
@@ -283,9 +283,9 @@ def test_compare_without_linked_tables_is_not_checked(tmp_path):
 
 def test_summarize_refuses_more_than_20_times(toolbox):
     """The limit written in the description is applied: 21 values in 'at' give an 'argument' error."""
-    r = toolbox.summarize_results(value="value", group_by=AMOUNT, time="step", at=list(range(21)), filters=EXP_A)
+    r = toolbox.summarize_results(value="value", group_by=AMOUNT, x="step", at=list(range(21)), filters=EXP_A)
     assert r["error_type"] == "argument" and "20" in r["error"]
-    ok = toolbox.summarize_results(value="value", group_by=AMOUNT, time="step", at=list(range(20)), filters=EXP_A)
+    ok = toolbox.summarize_results(value="value", group_by=AMOUNT, x="step", at=list(range(20)), filters=EXP_A)
     assert "error" not in ok
 
 
@@ -325,13 +325,13 @@ def test_langchain_tools_have_schemas_and_run(toolbox):
     tools = {t.name: t for t in make_langchain_tools(toolbox)}
     assert set(tools) == {"describe_database", "query_results", "summarize_results",
                           "describe_trends", "compare_groups", "calculate", "check_quality"}
-    assert {"value", "group_by", "time", "at", "filters", "table", "unit"} <= set(tools["summarize_results"].args)
+    assert {"value", "group_by", "x", "at", "filters", "table", "unit"} <= set(tools["summarize_results"].args)
     for tool in tools.values():
         assert "Each row of the data is one replicate" not in tool.description
     assert "comparable observations of one condition" in tools["summarize_results"].description
     assert "Welch" in tools["compare_groups"].description
     assert "replicate" not in tools["compare_groups"].description and "observations" in tools["compare_groups"].description
-    r = tools["summarize_results"].invoke({"value": "value", "group_by": AMOUNT, "time": "step",
+    r = tools["summarize_results"].invoke({"value": "value", "group_by": AMOUNT, "x": "step",
                                            "at": [10], "filters": EXP_A})
     assert r["rows"][0][:7] == [10, 10, 3, 100, 1, 99, 101]
 
@@ -437,7 +437,7 @@ def test_summarize_results_is_json_with_dates(dated_toolbox):
 
 def test_describe_trends_is_json_with_decimals(dated_toolbox):
     """A decimal value column and a date group give valid JSON."""
-    r = dated_toolbox.describe_trends(value="price", time="step", group_by="grp")
+    r = dated_toolbox.describe_trends(value="price", x="step", group_by="grp")
     assert "error" not in r
     json.dumps(r)
 

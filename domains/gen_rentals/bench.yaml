@@ -11,6 +11,7 @@ questions:
   1a: "Here are the exports of the bike-sharing management system. Describe the data and what they show, and point out what is not solid."
   2a: "How many customers and how many rentals are there?"
   3a: "Which subscription plan generates the most revenue, and what share of the total revenue?"
+  4a: "How many rentals started in each neighbourhood (quartiere)? Which neighbourhood has the most?"
 
 targets:           # what is TRUE in the data, per family (question id first character). Recomputed in code 31/10 01:05.
   "1":
@@ -24,8 +25,28 @@ targets:           # what is TRUE in the data, per family (question id first cha
   "3":
     - "base about 15 981 EUR (56.5%), premium 7 941 (28.1%), studente 4 211.25 (14.9%); total 28 274.25; orphan rentals 141 EUR (0.5%)"
     - "base generates the most revenue; the plan is in clienti and the amount in noleggi, so the tables must be joined"
+  "4":
+    - "rentals by departure neighbourhood (recomputed 3/11): EUR 1222, San Paolo 1081, Ostiense 997, Prati 641, Pigneto 400, Trastevere 349, Testaccio 326, Monti 132, Centocelle 50, Garbatella 2 (total 5200); EUR has the most"
+    - "stazioni has ST01 twice: a join with it counts Ostiense 999 instead of 997 (the rentals are in noleggi, the neighbourhood in stazioni)"
 
 auto_checks:
   "1": [420, 5200, 25]
   "2": [420, 5200]
   "3": [15981, 28274.25]
+  "4": [1222, 1081, 997]
+
+defects:           # written 3/11/2026 (with Pietro) BEFORE the runs; read by bench/classify_errors.py. Recomputed in code on rentals_clean.
+  2a:
+    defect: duplicate_station_row    # ST01 appears twice, identical: a join with stazioni gives 5202 rentals instead of 5200
+    trap_value: 5202
+    cleanable: true                  # one copy is enough: the cleaner can do it alone
+  3a:
+    defect: orphan_rentals           # 25 rentals (customer ids not in clienti) have no plan: an inner join drops 141 EUR
+    trap_value: 28133.25             # total revenue without the orphans (28274.25 with them; plans add up to 28133.25)
+    declare_value: [25, 141]         # right if it writes the trap total AND at least one of these (rentals left out, or their EUR): declared exclusion
+    cleanable: false                 # the cleaner cannot invent the customers: it declares them and the user decides
+  4a:
+    defect: duplicate_station_row    # the same ST01 row: a join with stazioni counts the 2 departures from ST01 twice
+    trap_value: 999                  # Ostiense 999 instead of 997 (EUR 1222 and San Paolo 1081 are not affected)
+    declare_value: [5202]            # declared if it says the counts add up to 5202, not 5200 (3/11): still wrong, it could correct
+    cleanable: true

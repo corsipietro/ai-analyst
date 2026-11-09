@@ -169,12 +169,12 @@ def test_summarize_with_unit_averages_per_unit_first(shop):
     means, raw, per_customer = per_plan("basic")
     row = r["rows"][0]
     assert row[0] == "basic" and row[1] == len(means) == 12
-    assert row[2] == pytest.approx(statistics.mean(means), abs=1e-3)
-    assert row[3] == pytest.approx(statistics.stdev(means), abs=1e-3)
-    assert (row[4], row[5]) == (pytest.approx(min(means), abs=1e-3), pytest.approx(max(means), abs=1e-3))
+    assert row[2] == pytest.approx(statistics.mean(means), rel=5e-3)         # 3 significant digits
+    assert row[3] == pytest.approx(statistics.stdev(means), rel=5e-3)
+    assert (row[4], row[5]) == (pytest.approx(min(means), rel=5e-3), pytest.approx(max(means), rel=5e-3))
     assert row[6] == len(raw) and row[7] == 0 and row[8] == pytest.approx(sum(raw))
     assert (row[9], row[10]) == (min(map(len, per_customer.values())), max(map(len, per_customer.values())))
-    assert row[2] != pytest.approx(statistics.mean(raw), abs=1e-3)       # not the mean over rows
+    assert row[2] != pytest.approx(statistics.mean(raw), rel=5e-3)       # not the mean over rows
 
 
 def test_summarize_without_unit_on_repeated_rows_gives_a_note_not_a_refusal(shop):
@@ -182,7 +182,7 @@ def test_summarize_without_unit_on_repeated_rows_gives_a_note_not_a_refusal(shop
     r = shop.summarize_results(value="price", group_by="plan")
     assert "error" not in r
     _, raw, _ = per_plan("basic")
-    assert r["rows"][0][:3] == ["basic", len(raw), pytest.approx(statistics.mean(raw), abs=1e-3)]
+    assert r["rows"][0][:3] == ["basic", len(raw), pytest.approx(statistics.mean(raw), rel=5e-3)]
     note = " ".join(r["notes"])
     assert "customer_id" in note and "unit" in note and "3" in note        # max rows per customer is 3
 
@@ -210,10 +210,10 @@ def test_compare_with_unit_is_welch_over_units(shop):
     assert "error" not in r and r["unit"] == ["customer_id"] and r["method"] == "welch"
     a_means, b_means = per_plan("basic")[0], per_plan("pro")[0]
     assert (r["a"]["n_units"], r["b"]["n_units"]) == (12, 13)
-    assert r["a"]["mean"] == pytest.approx(statistics.mean(a_means), abs=1e-3)
+    assert r["a"]["mean"] == pytest.approx(statistics.mean(a_means), rel=5e-3)
     welch = stats.welch_interval(a_means, b_means, SETTINGS["bootstrap"]["confidence"])
-    assert r["difference_b_minus_a"] == pytest.approx(welch["difference"], abs=1e-3)
-    assert r["degrees_of_freedom"] == pytest.approx(welch["degrees_of_freedom"], abs=1e-3)
+    assert r["difference_b_minus_a"] == pytest.approx(welch["difference"], rel=5e-3)
+    assert r["degrees_of_freedom"] == pytest.approx(welch["degrees_of_freedom"], rel=5e-3)
     assert r["verdict"] == "established"
     assert r["a"]["rows_per_unit"] == [1, 3] and r["b"]["rows_per_unit"] == [1, 3]
 
@@ -236,8 +236,8 @@ def test_toy_shape_summarize_pooled_steps_gives_a_note(toolbox):
 
 def test_compare_with_unit_and_a_fixed_time(toolbox):
     """With time + at each run has one row; unit='run_id' gives the same numbers as without unit."""
-    plain = toolbox.compare_groups(value="value", group_by=AMOUNT, a=10, b=20, time="step", at=10, filters=EXP_A)
-    unit = toolbox.compare_groups(value="value", group_by=AMOUNT, a=10, b=20, time="step", at=10, filters=EXP_A,
+    plain = toolbox.compare_groups(value="value", group_by=AMOUNT, a=10, b=20, x="step", at=10, filters=EXP_A)
+    unit = toolbox.compare_groups(value="value", group_by=AMOUNT, a=10, b=20, x="step", at=10, filters=EXP_A,
                                   unit="run_id")
     assert "notes" not in plain or not any("unit" in n for n in plain["notes"])
     assert unit["difference_b_minus_a"] == plain["difference_b_minus_a"] and unit["verdict"] == plain["verdict"]
@@ -263,13 +263,13 @@ def daily(tmp_path):
 
 def test_trends_with_a_date_default_period_keeps_at_most_max_points(daily):
     """84 days > 40 points, 12 weeks <= 40: the default period is the week; times are ISO strings; slope per day."""
-    r = daily.describe_trends(value="v", time="day")
+    r = daily.describe_trends(value="v", x="day")
     assert "error" not in r and r["period"] == "week"
     g = r["groups"][0]
-    assert g["initial"] == {"time": "2026-01-05", "mean": 3}
-    assert g["final"]["time"] == "2026-03-23"
+    assert g["initial"] == {"x": "2026-01-05", "mean": 3}
+    assert g["final"]["x"] == "2026-03-23"
     assert g["slope_last_part"]["slope_per_day"] == pytest.approx(1.0)
-    assert "slope_per_time_unit" not in g["slope_last_part"]
+    assert "slope_per_unit_of_x" not in g["slope_last_part"]
     assert len(g["series_sampled"]["rows"]) == 12 and g["series_sampled"]["rows"][1][0] == "2026-01-12"
     assert g["shape_sampled"] == "increasing"
     json.dumps(r)
@@ -277,7 +277,7 @@ def test_trends_with_a_date_default_period_keeps_at_most_max_points(daily):
 
 def test_trends_with_a_date_day_period_is_thinned_over_max_points(daily):
     """Explicit day period: 84 points exceed 40, the sampled series is thinned and a note says so."""
-    r = daily.describe_trends(value="v", time="day", period="day")
+    r = daily.describe_trends(value="v", x="day", period="day")
     g = r["groups"][0]
     assert r["period"] == "day" and g["slope_last_part"]["slope_per_day"] == pytest.approx(1.0)
     rows = g["series_sampled"]["rows"]
@@ -287,14 +287,14 @@ def test_trends_with_a_date_day_period_is_thinned_over_max_points(daily):
 
 def test_trends_with_a_date_month_period(daily):
     """Months: Jan, Feb, Mar (week 1 starts in January)."""
-    r = daily.describe_trends(value="v", time="day", period="month")
+    r = daily.describe_trends(value="v", x="day", period="month")
     times = [row[0] for row in r["groups"][0]["series_sampled"]["rows"]]
     assert times == ["2026-01-01", "2026-02-01", "2026-03-01"]
 
 
 def test_trends_with_a_date_start_and_end(daily):
     """start and end may be ISO dates for a date time column."""
-    r = daily.describe_trends(value="v", time="day", period="day", start="2026-02-01", end="2026-02-10")
+    r = daily.describe_trends(value="v", x="day", period="day", start="2026-02-01", end="2026-02-10")
     rows = r["groups"][0]["series_sampled"]["rows"]
     assert rows[0][0] == "2026-02-01" and rows[-1][0] == "2026-02-10" and len(rows) == 10
 
@@ -304,23 +304,23 @@ def test_trends_with_a_timestamp_time(tmp_path):
     rows = [[dt.datetime(2026, 1, 1 + i // 2, 6 * (i % 2)), float(i)] for i in range(20)]
     toolbox, source = make_toolbox(tmp_path, ["CREATE TABLE t (ts TIMESTAMP, v DOUBLE)"],
                                    [("INSERT INTO t VALUES (?, ?)", rows)])
-    r = toolbox.describe_trends(value="v", time="ts", period="day")
+    r = toolbox.describe_trends(value="v", x="ts", period="day")
     source.close()
     g = r["groups"][0]
-    assert g["series_sampled"]["rows"][0][:2] == ["2026-01-01", 2] and len(g["series_sampled"]["rows"]) == 10
+    assert g["series_sampled"]["rows"][0] == ["2026-01-01", 0.5] and len(g["series_sampled"]["rows"]) == 10
     assert g["slope_last_part"]["slope_per_day"] == pytest.approx(2.0)
 
 
 def test_trends_numeric_time_is_unchanged(toolbox):
     """A numeric time still gives step and slope_per_time_unit, no period."""
-    r = toolbox.describe_trends(value="value", time="step", group_by=AMOUNT, filters=EXP_A)
-    assert "period" not in r and r["step"] == 1
-    assert "slope_per_time_unit" in r["groups"][0]["slope_last_part"]
+    r = toolbox.describe_trends(value="value", x="step", group_by=AMOUNT, filters=EXP_A)
+    assert "period" not in r and r["step"] is None
+    assert "slope_per_unit_of_x" in r["groups"][0]["slope_last_part"]
 
 
 def test_trends_time_must_be_numeric_or_date(daily):
     """A text column as time is refused with a 'column' error."""
-    assert daily.describe_trends(value="v", time="site")["error_type"] == "column"
+    assert daily.describe_trends(value="v", x="site")["error_type"] == "column"
 
 
 # ---------------------------------------------------------------- check_quality
@@ -354,18 +354,18 @@ def test_quality_counts_rows_and_nulls_per_column(readings):
     """rows; NULL count and share only for the columns that have NULLs."""
     r = readings.check_quality(table="readings")
     assert r["table"] == "readings" and r["rows"] == 122
-    assert r["nulls"] == {"temp": {"count": 12, "share": 0.098}}
+    assert r["nulls"] == {"temp": {"count": 12, "share": 0.0984}}
 
 
 def test_quality_null_share_per_group(readings):
     """Site A: 10 NULL of 61 rows; site B: 2 of 61."""
     r = readings.check_quality(table="readings", group_by="site")
-    assert r["null_share_by_group"] == {"temp": {"A": 0.164, "B": 0.033}}
+    assert r["null_share_by_group"] == {"temp": {"A": 0.164, "B": 0.0328}}
 
 
 def test_quality_finds_the_ten_day_run_of_nulls(readings):
     """A run of at least 3 consecutive periods, all NULL, is reported with start and end; B's isolated NULLs are not."""
-    r = readings.check_quality(table="readings", group_by="site", time="day")
+    r = readings.check_quality(table="readings", group_by="site", x="day")
     assert r["null_runs"] == [{"group": "A", "column": "temp", "start": "2026-01-11", "end": "2026-01-20",
                                "periods": 10}]
     assert r["period"] == "day"
@@ -421,7 +421,7 @@ def test_quality_lists_are_capped_and_say_so(tmp_path):
 def test_quality_clean_table_reports_no_problem_keys(shop):
     """No NULL, duplicate, variant, number-as-text or orphan: only the row count (and the table)."""
     r = shop.check_quality(table="customers")
-    assert r == {"table": "customers", "rows": 25}
+    assert r == {"table": "customers", "filters": {}, "group_by": [], "rows": 25}
 
 
 def test_quality_filters_group_by_and_errors(readings):
@@ -430,13 +430,13 @@ def test_quality_filters_group_by_and_errors(readings):
     assert r["rows"] == 61 and r["nulls"]["temp"]["count"] == 2
     assert readings.check_quality(table="nope")["error_type"] == "column"
     assert readings.check_quality(table="readings", group_by="nope")["error_type"] == "column"
-    assert readings.check_quality(table="readings", time="site")["error_type"] == "column"
+    assert readings.check_quality(table="readings", x="site")["error_type"] == "column"
 
 
 def test_quality_is_json_and_leaves_data_alone(readings):
     """The report is JSON-safe (dates, floats) and a langchain tool exists."""
     from sim_analyst.tool_schemas import make_langchain_tools
-    json.dumps(readings.check_quality(table="readings", group_by="site", time="day"))
+    json.dumps(readings.check_quality(table="readings", group_by="site", x="day"))
     tool = {t.name: t for t in make_langchain_tools(readings)}["check_quality"]
     assert tool.invoke({"table": "readings"})["rows"] == 122
 
@@ -452,7 +452,7 @@ def test_descriptions_tell_when_to_use_unit_period_and_check_quality():
     assert {"unit"} <= set(ARGS_SCHEMAS["summarize_results"].model_fields)
     assert {"unit"} <= set(ARGS_SCHEMAS["compare_groups"].model_fields)
     assert {"period"} <= set(ARGS_SCHEMAS["describe_trends"].model_fields)
-    assert set(ARGS_SCHEMAS["check_quality"].model_fields) == {"table", "group_by", "time", "period", "filters"}
+    assert set(ARGS_SCHEMAS["check_quality"].model_fields) == {"table", "group_by", "x", "period", "filters"}
     assert all("replicate" not in text.lower() for text in DESCRIPTIONS.values())
 
 
@@ -463,10 +463,10 @@ def test_tools_version_is_g5():
 
 def test_summarize_and_compare_accept_a_date_time_with_at(daily):
     """A date written as text works in 'at'; a missing date is reported in the notes."""
-    r = daily.summarize_results(value="v", time="day", at=["2026-01-06", "2030-01-01"])
+    r = daily.summarize_results(value="v", x="day", at=["2026-01-06", "2030-01-01"])
     assert "error" not in r and r["rows"][0][:3] == ["2026-01-06", 1, 1]
     assert any("2030-01-01" in n for n in r["notes"])
-    c = daily.compare_groups(value="v", group_by="site", a="s1", b="s1", time="day", at="2026-01-06")
+    c = daily.compare_groups(value="v", group_by="site", a="s1", b="s1", x="day", at="2026-01-06")
     assert "error" not in c and c["a"]["n"] == 1
 
 
@@ -559,9 +559,9 @@ def test_a_varying_json_path_is_still_refused(toolbox):
     assert r["error_type"] == "column" and "runs.config (JSON" in r["error"]
 
 
-def test_the_category_limit_is_its_own_constant():
+def test_the_category_limit_is_its_own_setting():
     from sim_analyst import tools
-    assert tools.CATEGORY_MAX_VALUES == 20
+    assert tools.ANALYSIS_DEFAULTS["category_max_values"] == 20
 
 
 # ---------------------------------------------------------------- filters with operators
@@ -626,7 +626,7 @@ def test_bad_operators_are_argument_errors(grid):
 
 def test_operator_filters_work_in_the_other_tools(grid):
     assert grid.compare_groups(value="w", group_by="g", a="a", b="b", filters={"n": {"between": [3, 8]}})["a"]["n"] == 3
-    assert "error" not in grid.describe_trends(value="w", time="n", filters={"n": {">=": 2}})
+    assert "error" not in grid.describe_trends(value="w", x="n", filters={"n": {">=": 2}})
     assert grid.check_quality(table="grid", filters={"n": {"<=": 5}})["rows"] == 5
 
 
@@ -667,7 +667,7 @@ def test_unmatched_rows_are_included_when_the_joined_column_is_not_a_group(order
 
 
 def test_no_note_when_every_row_has_its_match(toolbox):
-    r = toolbox.summarize_results(value="value", group_by=AMOUNT, time="step", at=[10], filters=EXP_A)
+    r = toolbox.summarize_results(value="value", group_by=AMOUNT, x="step", at=[10], filters=EXP_A)
     assert not any("no match" in n for n in r.get("notes", []))
 
 
@@ -678,7 +678,7 @@ def test_a_filter_on_the_joined_column_drops_the_unmatched_rows_without_a_note(o
 
 # ---------------------------------------------------------------- wording and small fixes
 
-FORBIDDEN = ("customer", "station", "rental", "simulation", "experiment", "parameter", "results database",
+FORBIDDEN = ("customer", "station", "rental", "simulation", "experiment", "results database",
              "replicate", "seed", "toy")
 
 
@@ -700,22 +700,22 @@ def test_no_domain_words_in_what_the_model_reads():
     assert "several rows" in UNIT_HELP
 
 
-def test_identifier_names_have_no_language_specific_word():
-    from sim_analyst.tools import IDENTIFIER_NAME
-    assert IDENTIFIER_NAME.search("user_id") and IDENTIFIER_NAME.search("code") and not IDENTIFIER_NAME.search("codice")
+def test_identifiers_are_not_found_from_the_column_name():
+    from sim_analyst import tools
+    assert not hasattr(tools, "IDENTIFIER_NAME")      # g5.1-e: found from the values (see test_generic_x)
 
 
 def test_trends_error_names_the_argument_that_is_wrong(daily):
-    assert "value 'site'" in daily.describe_trends(value="site", time="day")["error"]
-    assert "time 'site'" in daily.describe_trends(value="v", time="site")["error"]
+    assert "value 'site'" in daily.describe_trends(value="site", x="day")["error"]
+    assert "x 'site'" in daily.describe_trends(value="v", x="site")["error"]
 
 
 def test_repetition_note_mentions_time_and_at_only_with_a_time_column():
     from sim_analyst.tools import Toolbox
     found = (["k"], 3, ["t.x"])
-    assert "time + at" in Toolbox.repetition_note(found, with_time=True)
-    assert "time + at" not in Toolbox.repetition_note(found, with_time=False)
-    assert "unit=" in Toolbox.repetition_note(found, with_time=False)
+    assert "x + at" in Toolbox.repetition_note(found, with_x=True)
+    assert "x + at" not in Toolbox.repetition_note(found, with_x=False)
+    assert "unit=" in Toolbox.repetition_note(found, with_x=False)
 
 
 def test_csv_timestamps_with_minutes_are_read_as_timestamps_and_a_text_date_matches_a_date(tmp_path):
@@ -724,12 +724,12 @@ def test_csv_timestamps_with_minutes_are_read_as_timestamps_and_a_text_date_matc
     source = DataSource(DataSpec(tables={"t": csv}))
     toolbox = Toolbox(source, SETTINGS)
     assert toolbox.schema["t"]["ts"].startswith("TIMESTAMP")
-    r = toolbox.describe_trends(value="v", time="ts", period="day")
-    assert "error" not in r and r["groups"][0]["initial"]["time"] == "2026-01-01"
-    assert toolbox.summarize_results(value="v", time="ts", at="2026-01-03 10:30")["rows"][0][2] == 3
+    r = toolbox.describe_trends(value="v", x="ts", period="day")
+    assert "error" not in r and r["groups"][0]["initial"]["x"] == "2026-01-01"
+    assert toolbox.summarize_results(value="v", x="ts", at="2026-01-03 10:30")["rows"][0][2] == 3
     source.close()
 
 
 def test_a_varchar_date_in_at_matches_a_date_column(daily):
-    r = daily.summarize_results(value="v", time="day", at="2026-01-06")
+    r = daily.summarize_results(value="v", x="day", at="2026-01-06")
     assert r["rows"][0][:3] == ["2026-01-06", 1, 1]

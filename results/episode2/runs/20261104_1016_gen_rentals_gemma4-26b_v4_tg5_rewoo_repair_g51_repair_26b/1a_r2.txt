@@ -1,0 +1,389 @@
+================================ Human Message =================================
+
+Here are the exports of the bike-sharing management system. Describe the data and what they show, and point out what is not solid.
+[REASONING]
+The user wants a description of the data, what it shows (general overview), and identification of what is not solid (data quality issues).
+
+    *   `clienti`: Customer information (id, registration date, plan, age, city).
+    *   `noleggi`: Rental information (id, client id, start station, arrival station, start time, duration, distance, amount).
+    *   `stazioni`: Station information (id, name, neighborhood, capacity).
+
+    *   What the data shows (overview):
+        *   General count of clients, rentals, and stations.
+        *   Rental activity (amounts, distances, times).
+        *   Client demographics (plans, age, cities).
+        *   Station locations (neighborhoods).
+    *   What is not solid (data quality):
+        *   Missing values (NULLs) in columns.
+        *   Potential inconsistencies (e.g., orphan IDs in `noleggi` linking to `clienti`).
+        *   Duplicates.
+        *   Data types or unexpected values.
+
+    *   *Step 1: Check data quality for all tables.* This will directly address the "what is not solid" part of the user's question by identifying NULLs, duplicates, or linkage issues. I'll check `clienti`, `noleggi`, and `stazioni`.
+    *   *Step 2: Get a summary of the client base.* Use `summarize_results` on `clienti` to show demographic distribution (e.g., by plan or city) to describe the users.
+    *   *Step 3: Get a summary of rental activity.* Use `summarize_results` on `noleggi` for `importo_eur` and `km` to describe the revenue and distance usage.
+    *   *Step 4: Look at station usage.* Use `query_results` to see which stations are most/least used or provide a count of stations by neighborhood to describe the infrastructure.
+
+    *   `check_quality(table='clienti')`
+    *   `check_quality(table='noleggi')`
+    *   `check_quality(table='stazioni')`
+    *   `summarize_results(table='clienti', value='eta', group_by='piano')` -> Helps describe "who" uses it.
+    *   `summarize_results(table='noleggi', value='importo_eur')` -> Helps describe revenue.
+    *   `summarize_results(table='noleggi', value='km')` -> Helps describe distance.
+    *   `query_results(sql="SELECT stazione_partenza, COUNT(*) as n_noleggi FROM noleggi GROUP BY stazione_partenza ORDER BY n_noleggi DESC")` -> Helps describe where activity is.
+
+    *Refining plan to stay under 8 steps and be efficient:*
+    1. `check_quality` for all three tables to identify "not solid" parts.
+    2. `summarize_results` on `clienti.eta` grouped by `piano` to describe users.
+    3. `summarize_results` on `noleggi.importo_eur` to describe revenue.
+    4. `summarize_results` on `noleggi.km` to describe trip length.
+    5. `query_results` to show station usage or count stations by neighborhood.
+
+Actually, I can combine some thoughts. The user asks to "Describe the data and what they show".
+To describe what they show:
+- Clients: How many? What plans? Ages?
+- Rentals: Revenue, distance, time period.
+- Stations: How many? Neighborhoods?
+
+To point out what's not solid:
+- `check_quality` on all tables is essential.
+
+*Revised Plan:*
+1. `check_quality(table='clienti')` - Check for missing ages, duplicate clients, etc.
+2. `check_quality(table='noleggi')` - Check for missing durations, stations, or amounts. This also identifies orphan records.
+3. `check_quality(table='stazioni')` - Check for missing neighborhood/capacity.
+4. `summarize_results(table='clienti', value='cliente_id')` (Actually, `summarize_results` needs a numeric column. I'll use `summarize_results` with a count or just look at the DB description which already says rows=420. I'll use `summarize_results` on a numeric column or just use `query_results` for a general count/distribution).
+Wait, `summarize_results` requires a numeric column. `eta` is numeric.
+5. `summarize_results(table='clienti', value='eta', group_by='piano')` - Describe user demographics.
+6. `summarize_results(table='noleggi', value='importo_eur')` - Describe revenue.
+7. `query_results(sql="SELECT quartiere, COUNT(*) as n_stazioni FROM stazioni GROUP BY quartiere")` - Describe station coverage.
+
+Wait, I can do a quick overview with `query_results` to get counts of everything if needed, but the DB description provides some info.
+
+Let's stick to:
+1. Quality check (3 calls).
+2. Client description (1 call).
+3. Rental description (2 calls: revenue and km).
+4. Station description (1 call).
+
+Total: 7 calls.
+
+*Wait*, the `check_quality` for `noleggi` will tell me about the orphan `cliente_id`s mentioned in the DB description (11 orphans). This is a key "not solid" point.
+
+*Final Step List:*
+1. `check_quality(table='clienti')`
+2. `check_quality(table='noleggi')`
+3. `check_quality(table='stazioni')`
+4. `summarize_results(table='clienti', value='eta', group_by='piano')`
+5. `summarize_results(table='noleggi', value='importo_eur')`
+6. `summarize_results(table='noleggi', value='km')`
+7. `query_results(sql="SELECT quartiere, COUNT(*) as count_stazioni FROM stazioni GROUP BY quartiere")`
+
+This covers:
+- "Describe the data": (through the results of 4, 5, 6, 7)
+- "What they show": (through the results of 4, 5, 6, 7)
+- "What is not solid": (through 1, 2, 3)
+
+Actually, I can use `query_results` to get a count of customers, rentals, and stations in one go if I want to be very efficient, but the tool says "Aggregate in SQL instead of reading raw rows".
+
+One detail: `summarize_results` needs a numeric column. `eta` and `importo_eur` and `km` are numeric.
+
+Let's refine the plan.
+Step 1: `check_quality(table='clienti')`
+Step 2: `check_quality(table='noleggi')`
+Step 3: `check_quality(table='stazioni')`
+Step 4: `summarize_results(table='clienti', value='eta', group_by='piano')`
+Step 5: `summarize_results(table='noleggi', value='importo_eur')`
+Step 6: `summarize_results(table='noleggi', value='km')`
+Step 7: `query_results(sql="SELECT quartiere, COUNT(*) as num_stazioni FROM stazioni GROUP BY quartiere")`
+
+This seems solid.
+
+*Checking the database description for specific "not solid" clues:*
+- `clienti`: `eta` has 23 nulls.
+- `noleggi`: `stazione_arrivo` has 140 nulls. `durata_min` has 155 nulls. `cliente_id` has 11 orphans.
+- `stazioni`: No obvious issues mentioned in the description.
+
+The `check_quality` calls will confirm these and allow me to report them.
+
+*Self-Correction:* The user wants me to "Describe the data and what they show".
+The `summarize_results` on `eta` (age) by `piano` (plan) is good.
+Maybe I should also see how many clients are in each city.
+`query_results(sql="SELECT citta, COUNT(*) as n_clienti FROM clienti GROUP BY citta")`
+
+Actually, I'll just use `query_results` to get a general summary of the counts of everything first to be safe.
+
+1. `check_quality(table='clienti')`
+2. `check_quality(table='noleggi')`
+3. `check_quality(table='stazioni')`
+4. `query_results(sql="SELECT 'clienti' as table, COUNT(*) as n UNION ALL SELECT 'noleggi', COUNT(*) FROM noleggi UNION ALL SELECT 'stazioni', COUNT(*) FROM stazioni")` - wait, the UNION needs to be careful.
+Actually, the DB description provides the row counts: 420, 5200, 25. I can just use them.
+
+Let's refine.
+1. `check_quality(table='clienti')`
+2. `check_quality(table='noleggi')`
+3. `check_quality(table='stazioni')`
+4. `summarize_results(table='clienti', value='eta', group_by='piano')`
+5. `summarize_results(table='noleggi', value='importo_eur')`
+6. `summarize_results(table='noleggi', value='km')`
+7. `query_results(sql="SELECT quartiere, COUNT(*) as n_stazioni FROM stazioni GROUP BY quartiere")`
+
+Wait, I'll add one more to see the cities for clients.
+8. `query_results(sql="SELECT citta, COUNT(*) as n_clienti FROM clienti GROUP BY citta")`
+
+Wait, I'll group the quality checks or something? No, they are separate.
+The question asks to "Describe the data".
+I will provide a plan that checks quality and then extracts meaningful summaries.
+
+Final Plan:
+1. `check_quality(table='clienti')` (To identify missing age, duplicates, etc.)
+2. `check_quality(table='noleggi')` (To identify missing arrival station, duration, and link orphans)
+3. `check_quality(table='stazioni')` (To check station integrity)
+4. `summarize_results(table='clienti', value='eta', group_by='piano')` (To describe the customer base by plan and age)
+5. `query_results(sql="SELECT citta, COUNT(*) as num_clienti FROM clienti GROUP BY citta")` (To see where customers are from)
+6. `summarize_results(table='noleggi', value='importo_eur')` (To describe revenue)
+7. `summarize_results(table='noleggi', value='km')` (To describe trip distances)
+8. `query_results(sql="SELECT quartiere, COUNT(*) as n_stazioni FROM stazioni GROUP BY quartiere")` (To describe station distribution)
+[/REASONING]
+================================== Ai Message ==================================
+
+1. check_quality: To identify missing values (like age), duplicates, or inconsistencies in the client records.
+2. check_quality: To identify missing values (like arrival station or duration) and check for orphan client IDs that don't exist in the client table.
+3. check_quality: To ensure the station data is complete and consistent.
+4. summarize_results: To describe the customer base, specifically looking at the age distribution across different subscription plans.
+5. query_results: To understand the geographic distribution of the clients.
+6. summarize_results: To provide a summary of the revenue generated from rentals (mean, total, etc.).
+7. summarize_results: To describe the typical distance traveled in a rental.
+8. query_results: To describe the coverage of the service by neighborhood.
+Tool Calls:
+  check_quality (step_1)
+ Call ID: step_1
+  Args:
+    table: clienti
+  check_quality (step_2)
+ Call ID: step_2
+  Args:
+    table: noleggi
+  check_quality (step_3)
+ Call ID: step_3
+  Args:
+    table: stazioni
+  summarize_results (step_4)
+ Call ID: step_4
+  Args:
+    value: eta
+    group_by: piano
+    table: clienti
+  query_results (step_5)
+ Call ID: step_5
+  Args:
+    sql: SELECT citta, COUNT(*) as n_clienti FROM clienti GROUP BY citta
+  summarize_results (step_6)
+ Call ID: step_6
+  Args:
+    value: importo_eur
+    table: noleggi
+  summarize_results (step_7)
+ Call ID: step_7
+  Args:
+    value: km
+    table: noleggi
+  query_results (step_8)
+ Call ID: step_8
+  Args:
+    sql: SELECT quartiere, COUNT(*) as n_stazioni FROM stazioni GROUP BY quartiere
+================================= Tool Message =================================
+Name: check_quality
+
+{"table": "clienti", "filters": {}, "group_by": [], "rows": 420, "nulls": {"eta": {"count": 23, "share": 0.0548}}}
+================================= Tool Message =================================
+Name: check_quality
+
+{"table": "noleggi", "filters": {}, "group_by": [], "rows": 5200, "nulls": {"durata_min": {"count": 155, "share": 0.0298}, "stazione_arrivo": {"count": 140, "share": 0.0269}}, "orphans": [{"column": "cliente_id", "to": "clienti.cliente_id", "orphans": 11, "examples": ["C0500", "C0501", "C0502"]}]}
+================================= Tool Message =================================
+Name: check_quality
+
+{"table": "stazioni", "filters": {}, "group_by": [], "rows": 25, "duplicate_rows": {"extra_rows": 1, "groups": 1, "examples": [{"stazione_id": "ST01", "nome": "Piramide", "quartiere": "Ostiense", "capacita": 20}]}, "identifier_duplicates": [{"column": "stazione_id", "duplicated_values": 1, "extra_rows": 1, "examples": ["ST01"]}, {"column": "nome", "duplicated_values": 1, "extra_rows": 1, "examples": ["Piramide"]}]}
+================================= Tool Message =================================
+Name: summarize_results
+
+{"value": "eta", "filters": {}, "group_by": ["clienti.piano"], "columns": ["piano", "n", "mean", "std", "min", "max", "n_rows", "n_null", "sum"], "rows": [["base", 216, 36.2, 10.5, 16, 65, 230, 14, 7830], ["premium", 114, 34.1, 10.8, 16, 61, 120, 6, 3893], ["studente", 67, 35.6, 11.5, 16, 62, 70, 3, 2387]], "truncated": false, "notes": ["aggregated over citta (3 values)"]}
+================================= Tool Message =================================
+Name: query_results
+
+{"columns": ["citta", "n_clienti"], "rows": [["Fiumicino", 61], ["Ciampino", 63], ["Roma", 296]], "truncated": false}
+================================= Tool Message =================================
+Name: summarize_results
+
+{"value": "importo_eur", "filters": {}, "group_by": [], "columns": ["n", "mean", "std", "min", "max", "n_rows", "n_null", "sum"], "rows": [[5200, 5.44, 2.86, 1.5, 28, 5200, 0, 28274]], "truncated": false, "notes": ["aggregated over piano (3 values), citta (3 values)", "rows repeat: a group holds up to 317 rows for the same cliente_id, so its rows are not independent observations (columns that vary within those rows: ['noleggi.noleggio_id', 'noleggi.stazione_partenza', 'noleggi.stazione_arrivo', 'noleggi.inizio', 'noleggi.durata_min', 'noleggi.km']). Pass unit=[\"cliente_id\"] to average per cliente_id first, or fix the varying columns with filters."]}
+================================= Tool Message =================================
+Name: summarize_results
+
+{"value": "km", "filters": {}, "group_by": [], "columns": ["n", "mean", "std", "min", "max", "n_rows", "n_null", "sum"], "rows": [[5200, 3.99, 2.72, 0.36, 28.7, 5200, 0, 20754]], "truncated": false, "notes": ["aggregated over piano (3 values), citta (3 values)", "rows repeat: a group holds up to 317 rows for the same cliente_id, so its rows are not independent observations (columns that vary within those rows: ['noleggi.noleggio_id', 'noleggi.stazione_partenza', 'noleggi.stazione_arrivo', 'noleggi.inizio', 'noleggi.durata_min', 'noleggi.importo_eur']). Pass unit=[\"cliente_id\"] to average per cliente_id first, or fix the varying columns with filters."]}
+================================= Tool Message =================================
+Name: query_results
+
+{"columns": ["quartiere", "n_stazioni"], "rows": [["Trastevere", 3], ["San Paolo", 3], ["Pigneto", 2], ["Ostiense", 3], ["Testaccio", 3], ["EUR", 3], ["Centocelle", 2], ["Monti", 2], ["Prati", 3], ["Garbatella", 1]], "truncated": false}
+[REASONING]
+*   Input: A request to describe the data, what it shows, and what is not solid.
+    *   Data context: E-bike sharing service in Rome (June-August 2026).
+    *   Tables: `clienti` (customers), `noleggi` (rentals), `stazioni` (stations).
+    *   Goal: Summarize data, insights, and data quality issues/limitations.
+
+    *   `clienti`:
+        *   420 rows.
+        *   `eta` (age): 23 missing values (5.48%).
+        *   `citta` (city): Roma (296), Ciampino (63), Fiumicino (61).
+        *   `piano` (plan) vs `eta` (age): Base (avg 36.2), Premium (avg 34.1), Studente (avg 35.6).
+    *   `noleggi`:
+        *   5200 rows.
+        *   `durata_min` (duration): 155 missing values (2.98%).
+        *   `stazione_arrivo` (arrival station): 140 missing values (2.69%).
+        *   `cliente_id` (orphans): 11 rentals refer to non-existent client IDs.
+        *   `importo_eur` (amount): Mean €5.44, Total €28,274.
+        *   `km` (distance): Mean 3.99 km, Total 20,754 km.
+    *   `stazioni`:
+        *   25 rows (but notes say 24 distinct `stazione_id`).
+        *   Duplicates: One duplicate entry for "ST01" (Piramide, Ostiense).
+        *   Coverage: Distributed across 10 neighborhoods (Trastevere, San Paolo, etc.).
+
+    *   *What it shows*:
+        *   Customer demographics: Mostly from Rome, ages roughly in the 30s across plans.
+        *   Revenue/Usage: €28,274 revenue from 5,200 rentals, averaging ~€5.44 and ~4km per trip.
+        *   Network: 25 stations across various Rome neighborhoods.
+    *   *What is not solid (Data Quality/Risks)*:
+        *   Missing values: Age (5.5%), Duration (3%), Arrival station (2.7%).
+        *   Integrity: 11 rentals have no matching client (orphans).
+        *   Duplicates: Duplicate station (ST01).
+        *   Statistical bias/Independence: Rentals are grouped by client. Averages for revenue and distance are per-rental, but since one client can have many rentals, the observations aren't independent if we were looking at client behavior.
+        *   Note on "noleggi": The `stazione_arrivo` is missing for 140 cases, meaning we can't track the full trip for ~2.7% of rentals.
+
+    *   *Step 1: Summary statement.*
+    *   *Step 2: Evidence (what it shows).*
+    *   *Step 3: Limits/Data Quality (what is not solid).*
+
+    *   Refining the "What it shows" part:
+        *   Clients: 420 total. Most are in Rome [tool].
+        *   Plans: Base is the largest group (216) [tool].
+        *   Rentals: 5200 rides [tool]. Total revenue €28,274 [tool].
+        *   Stations: 25 entries (24 unique IDs) [tool].
+
+    *   Refining the "Not solid" part:
+        *   Missing data in `clienti` (age), `noleggi` (duration, arrival station).
+        *   Referential integrity (11 orphan rentals).
+        *   Duplicated station entry.
+
+    *   *Constraint Check*: "Every number in the answer must come from a tool result, the context or the calculate tool."
+    *   *Constraint Check*: "Mark each claim as [tool], [context] or [inference]."
+
+    *   Let's double check the sums/averages.
+        *   `importo_eur`: sum 28274.
+        *   `km`: sum 20754.
+        *   `eta`: ages are within 16-65.
+
+    *   *Self-Correction during drafting*: The user asked "what they show" and "what is not solid". I need to be very clear on the distinction.
+
+    *   *Data Description (what it shows)*:
+        *   Customer base of 420 people, primarily located in Rome (296) [tool], with subscription plans distributed across 'base' (216), 'premium' (114), and 'studente' (67) [tool].
+        *   Rental activity totaling 5,200 trips [tool], generating €28,274 in revenue [tool] with an average trip distance of 3.99 km [tool].
+        *   A station network of 25 entries [tool] covering 10 different neighborhoods in Rome [tool].
+
+    *   *Data Quality (what is not solid)*:
+        *   **Missing Data**: Age is missing for ~5.5% of clients [tool], trip duration is missing for ~3% of rentals [tool], and arrival stations are missing for ~2.7% of rentals [tool].
+        *   **Integrity Issues**: 11 rentals are linked to `cliente_id`s that do not exist in the client database [tool].
+        *   **Duplicates**: There is a duplicate entry in the stations table for station 'ST01' (Piramide) [tool].
+        *   **Statistical Note**: Rental data is highly clustered; some clients have up to 317 rentals, meaning rental-level averages (like €5.44 per trip) do not represent independent observations of unique customers [tool].
+
+    *   *Short answer first*:
+        The dataset contains records for 420 clients, 5,200 rentals, and 25 station entries for a bike-sharing service in Rome. It shows a customer base primarily based in Rome with an average rental revenue of approximately €5.44 per trip. However, the data is not fully reliable due to missing values in ages and trip details, duplicate station entries, and orphaned rental records.
+
+    *   *Evidence*:
+        ... (as drafted above) ...
+
+    *   *Final Check*:
+        *   `importo_eur` mean: 5.44 [tool]
+        *   `km` mean: 3.99 [tool]
+        *   `clienti` rows: 420 [tool]
+        *   `noleggi` rows: 5200 [tool]
+        *   `stazioni` rows: 25 [tool]
+        *   `stazione_arrivo` nulls: 140 [tool]
+        *   `durata_min` nulls: 155 [tool]
+        *   `eta` nulls: 23 [tool]
+        *   `orphans`: 11 [tool]
+        *   `duplicates`: 1 [tool]
+
+    Everything checks out.
+
+    Wait, the prompt asks: "Describe the data and what they show, and point out what is not solid."
+
+    The prompt for the answer says "short answer first (2-4 sentences), then the evidence... then the limits."
+
+    *Structure*:
+    Summary (2-4 sentences).
+    Evidence (The breakdown).
+    Limits (The "not solid" part).
+
+    *Actually*, the "not solid" part *is* the "limits" in this context. I will group them to be clear.
+
+    *Refined structure*:
+    1. Summary (Short).
+    2. What the data shows (Evidence).
+    3. What is not solid (Limits/Data Quality).
+
+    Let's refine the "evidence" section to ensure it's strictly from tool results.
+
+    *Plan check*:
+    Clients: 420 total. 296 in Roma [tool].
+    Rentals: 5200 total. Total revenue €28,274 [tool]. Mean revenue €5.44 [tool].
+    Stations: 25 total.
+
+    *Quality check*:
+    Missing age: 23/420 = 5.48% [tool].
+    Missing duration: 155/5200 = 2.98% [tool].
+    Missing arrival station: 140/5200 = 2.69% [tool].
+    Orphans: 11 [tool].
+    Duplicates: 1 station [tool].
+
+    *Final check of instructions*: "Every number in the answer must come from a tool result, the context or the calculate tool. Mark each claim as [tool], [context] or [computed]."
+
+    The summary counts/means are from `summarize_results` and `query_results`.
+
+    Wait, the "Average age" for plans was:
+    Base: 36.2
+    Premium: 34.1
+    Studente: 35.6
+    I'll include that in the description.
+
+    One more thing: the `noleggi` table note from the tool says "rows repeat: a group holds up to 317 rows for the same cliente_id, so its rows are not independent observations". This is a crucial "not solid" point regarding statistical inference.
+
+    *Double check if I can calculate the percentage for age*:
+    23 / 420.
+    Let's use calculate tool for the percentage to be safe.
+    23 / 420 = 0.05476... -> 5.5%.
+
+    *Final Answer Polish*:
+    The dataset provides an overview of a bike-sharing service in Rome, covering 420 customers, 5,200 rentals, and 25 station entries. It highlights a customer base mostly located in Rome with a total rental revenue of €28,274. However, the data contains several quality issues, including missing trip details, duplicate stations, and orphaned records that affect its reliability.
+
+    **What the data shows**
+    *   **Customer Base**: There are 420 registered clients [tool]. The majority are based in Roma (296) [tool]. Subscription plans are divided into 'base' (216), 'premium' (114), and 'studente' (67) [tool]. The average age across plans is approximately 34–36 years [tool].
+    *   **Rental Activity**: A total of 5,200 rentals were recorded [tool], generating €28,274 in revenue [tool]. The average rental amount is €5.44 [tool] for an average distance of 3.99 km [tool].
+    *   **Infrastructure**: The service operates 25 station entries [tool] across 10 different neighborhoods in Rome [tool].
+
+    **What is not solid**
+    *   **Missing Information**: Client ages are missing for 23 records (approx. 5.5%) [tool/computed]. Rental details are incomplete, with 155 missing durations (approx. 3.0%) [tool/computed] and 140 missing arrival stations (approx. 2.7%) [tool/computed].
+    *   **Data Integrity**: 11 rental records [tool] refer to client IDs that do not exist in the `clienti` table [tool]. Additionally, the stations table contains a duplicate entry for station 'ST01' [tool].
+    *   **Statistical Validity**: Rental-level averages (e.g., revenue or distance) may be misleading for analyzing customer behavior because the data is heavily clustered; a single client can account for up to 317 individual rentals [tool]. This means the observations are not independent.
+[/REASONING]
+================================== Ai Message ==================================
+
+The dataset provides an overview of a bike-sharing service in Rome, covering 420 customers, 5,200 rentals, and 25 station entries. It shows a customer base primarily located in Rome with a total rental revenue of €28,274. However, the data is not entirely reliable due to missing trip details, duplicate station entries, and orphaned rental records.
+
+**What the data shows**
+* **Customer Base**: There are 420 registered clients [tool]. The majority are located in Roma (296) [tool]. Subscription plans consist of 'base' (216), 'premium' (114), and 'studente' (67) [tool], with an average age across all plans between 34 and 36 years [tool].
+* **Rental Activity**: A total of 5,200 rentals were recorded [tool], generating €28,274 in revenue [tool]. The average rental amount is €5.44 [tool] for an average trip distance of 3.99 km [tool].
+* **Infrastructure**: The service utilizes 25 station entries [tool] distributed across 10 different neighborhoods in Rome [tool].
+
+**What is not solid**
+* **Missing Information**: Several key variables are incomplete: age is missing for 23 clients (approx. 5.5%) [tool/computed], trip duration is missing for 155 rentals (approx. 3.0%) [tool/computed], and arrival stations are missing for 140 rentals (approx. 2.7%) [tool/computed].
+* **Data Integrity**: 11 rental records [tool] are linked to `cliente_id`s that do not exist in the client database [tool]. Furthermore, the stations table contains a duplicate entry for station 'ST01' [tool].
+* **Statistical Validity**: When analyzing user behavior, the rental data is heavily clustered; a single client can account for up to 317 rentals [tool]. Because these rental-level observations are not independent, simple averages for revenue or distance may not accurately represent the typical experience of a unique customer.
